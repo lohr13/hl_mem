@@ -1,0 +1,697 @@
+{
+  "case_count": 24,
+  "cases": [
+    {
+      "actual_claim_ids": [
+        "claim:entity-01-unique-active:decoy-00",
+        "claim:entity-01-unique-active:decoy-01",
+        "claim:entity-01-unique-active:decoy-02",
+        "claim:entity-01-unique-active:decoy-03",
+        "claim:entity-01-unique-active:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-01-unique-active:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-01-unique-active",
+      "latency_ms": 4.36169991735369,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-02-chinese-alias:decoy-00",
+        "claim:entity-02-chinese-alias:decoy-01",
+        "claim:entity-02-chinese-alias:decoy-02",
+        "claim:entity-02-chinese-alias:decoy-03",
+        "claim:entity-02-chinese-alias:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "multilingual_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-02-chinese-alias:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-02-chinese-alias",
+      "latency_ms": 4.072899930179119,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-03-longer-ascii:decoy-00",
+        "claim:entity-03-longer-ascii:decoy-01",
+        "claim:entity-03-longer-ascii:decoy-02",
+        "claim:entity-03-longer-ascii:decoy-03",
+        "claim:entity-03-longer-ascii:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-03-longer-ascii:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-03-longer-ascii",
+      "latency_ms": 3.7992000579833984,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-04-longer-chinese:decoy-00",
+        "claim:entity-04-longer-chinese:decoy-01",
+        "claim:entity-04-longer-chinese:decoy-02",
+        "claim:entity-04-longer-chinese:decoy-03",
+        "claim:entity-04-longer-chinese:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-04-longer-chinese:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-04-longer-chinese",
+      "latency_ms": 3.9639000315219164,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-05-historical-alias:decoy-00",
+        "claim:entity-05-historical-alias:decoy-01",
+        "claim:entity-05-historical-alias:decoy-02",
+        "claim:entity-05-historical-alias:decoy-03",
+        "claim:entity-05-historical-alias:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "historical_alias",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-05-historical-alias:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-05-historical-alias",
+      "latency_ms": 3.7921000039204955,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "off",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-06-cross-type:decoy-00",
+        "claim:entity-06-cross-type:decoy-01",
+        "claim:entity-06-cross-type:decoy-02",
+        "claim:entity-06-cross-type:decoy-03",
+        "claim:entity-06-cross-type:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "cross_type_same_name",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-06-cross-type:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-06-cross-type",
+      "latency_ms": 3.799599944613874,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-07-same-span:decoy-00",
+        "claim:entity-07-same-span:decoy-01",
+        "claim:entity-07-same-span:decoy-02",
+        "claim:entity-07-same-span:decoy-03",
+        "claim:entity-07-same-span:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "same_span_ambiguity",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-07-same-span:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-07-same-span",
+      "latency_ms": 4.341799998655915,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-08-overlap:decoy-00",
+        "claim:entity-08-overlap:decoy-01",
+        "claim:entity-08-overlap:decoy-02",
+        "claim:entity-08-overlap:decoy-03",
+        "claim:entity-08-overlap:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "overlapping_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-08-overlap:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-08-overlap",
+      "latency_ms": 4.781800089403987,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-09-multiple-entities:decoy-00",
+        "claim:entity-09-multiple-entities:decoy-01",
+        "claim:entity-09-multiple-entities:decoy-02",
+        "claim:entity-09-multiple-entities:decoy-03",
+        "claim:entity-09-multiple-entities:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "multiple_entities",
+      "channel_counts": {},
+      "confidence_class": "ambiguous",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-09-multiple-entities:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-09-multiple-entities",
+      "latency_ms": 3.7684000562876463,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-10-no-entity:decoy-00",
+        "claim:entity-10-no-entity:decoy-01",
+        "claim:entity-10-no-entity:decoy-02",
+        "claim:entity-10-no-entity:decoy-03",
+        "claim:entity-10-no-entity:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "no_entity",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-10-no-entity:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-10-no-entity",
+      "latency_ms": 3.7797000259160995,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "off",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-11-incomplete-links:decoy-00",
+        "claim:entity-11-incomplete-links:decoy-01",
+        "claim:entity-11-incomplete-links:decoy-02",
+        "claim:entity-11-incomplete-links:decoy-03",
+        "claim:entity-11-incomplete-links:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "incomplete_links",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-11-incomplete-links:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-11-incomplete-links",
+      "latency_ms": 3.7543000653386116,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-12-empty-residual:decoy-00",
+        "claim:entity-12-empty-residual:decoy-01",
+        "claim:entity-12-empty-residual:decoy-02",
+        "claim:entity-12-empty-residual:decoy-03",
+        "claim:entity-12-empty-residual:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "empty_residual",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-12-empty-residual:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-12-empty-residual",
+      "latency_ms": 3.8931999588385224,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-13-temporal-current:decoy-00",
+        "claim:entity-13-temporal-current:decoy-01",
+        "claim:entity-13-temporal-current:decoy-02",
+        "claim:entity-13-temporal-current:decoy-03",
+        "claim:entity-13-temporal-current:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "temporal_current",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-13-temporal-current:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-13-temporal-current",
+      "latency_ms": 3.7815000396221876,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-14-temporal-history:decoy-00",
+        "claim:entity-14-temporal-history:decoy-01",
+        "claim:entity-14-temporal-history:decoy-02",
+        "claim:entity-14-temporal-history:decoy-03",
+        "claim:entity-14-temporal-history:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "temporal_historical",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-14-temporal-history:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-14-temporal-history",
+      "latency_ms": 4.360600025393069,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-15-namespace:decoy-00",
+        "claim:entity-15-namespace:decoy-01",
+        "claim:entity-15-namespace:decoy-02",
+        "claim:entity-15-namespace:decoy-03",
+        "claim:entity-15-namespace:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "namespace_isolation",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-15-namespace:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-15-namespace",
+      "latency_ms": 3.762400010600686,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-16-storage-failure:decoy-00",
+        "claim:entity-16-storage-failure:decoy-01",
+        "claim:entity-16-storage-failure:decoy-02",
+        "claim:entity-16-storage-failure:decoy-03",
+        "claim:entity-16-storage-failure:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "storage_failure",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-16-storage-failure:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-16-storage-failure",
+      "latency_ms": 3.82829993031919,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "off",
+      "wide_equivalent": true
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-17-project:decoy-00",
+        "claim:entity-17-project:decoy-01",
+        "claim:entity-17-project:decoy-02",
+        "claim:entity-17-project:decoy-03",
+        "claim:entity-17-project:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-17-project:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-17-project",
+      "latency_ms": 3.790399990975857,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-18-person:decoy-00",
+        "claim:entity-18-person:decoy-01",
+        "claim:entity-18-person:decoy-02",
+        "claim:entity-18-person:decoy-03",
+        "claim:entity-18-person:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-18-person:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-18-person",
+      "latency_ms": 3.8027999689802527,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-19-device:decoy-00",
+        "claim:entity-19-device:decoy-01",
+        "claim:entity-19-device:decoy-02",
+        "claim:entity-19-device:decoy-03",
+        "claim:entity-19-device:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-19-device:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-19-device",
+      "latency_ms": 6.581899942830205,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-20-target-role:decoy-00",
+        "claim:entity-20-target-role:decoy-01",
+        "claim:entity-20-target-role:decoy-02",
+        "claim:entity-20-target-role:decoy-03",
+        "claim:entity-20-target-role:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-20-target-role:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-20-target-role",
+      "latency_ms": 4.191099898889661,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-21-repeat-mention:decoy-00",
+        "claim:entity-21-repeat-mention:decoy-01",
+        "claim:entity-21-repeat-mention:decoy-02",
+        "claim:entity-21-repeat-mention:decoy-03",
+        "claim:entity-21-repeat-mention:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "unique_active_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-21-repeat-mention:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-21-repeat-mention",
+      "latency_ms": 4.043999942950904,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-22-punctuation:decoy-00",
+        "claim:entity-22-punctuation:decoy-01",
+        "claim:entity-22-punctuation:decoy-02",
+        "claim:entity-22-punctuation:decoy-03",
+        "claim:entity-22-punctuation:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "alias_in_longer_text",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-22-punctuation:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-22-punctuation",
+      "latency_ms": 4.2625999776646495,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-23-chinese-project:decoy-00",
+        "claim:entity-23-chinese-project:decoy-01",
+        "claim:entity-23-chinese-project:decoy-02",
+        "claim:entity-23-chinese-project:decoy-03",
+        "claim:entity-23-chinese-project:decoy-04"
+      ],
+      "actual_scope": "observe",
+      "category": "multilingual_alias",
+      "channel_counts": {},
+      "confidence_class": "high",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-23-chinese-project:target"
+      ],
+      "expected_scope": "entity",
+      "forbidden_entity_hits": 5,
+      "forbidden_top_1": true,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-23-chinese-project",
+      "latency_ms": 4.195700050331652,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "observe",
+      "wide_equivalent": false
+    },
+    {
+      "actual_claim_ids": [
+        "claim:entity-24-inactive:decoy-00",
+        "claim:entity-24-inactive:decoy-01",
+        "claim:entity-24-inactive:decoy-02",
+        "claim:entity-24-inactive:decoy-03",
+        "claim:entity-24-inactive:decoy-04"
+      ],
+      "actual_scope": "wide",
+      "category": "historical_alias",
+      "channel_counts": {},
+      "confidence_class": "low",
+      "embedding_calls": 1,
+      "expected_claim_ids": [
+        "claim:entity-24-inactive:target"
+      ],
+      "expected_scope": "wide",
+      "forbidden_entity_hits": 0,
+      "forbidden_top_1": false,
+      "hit_at_1": false,
+      "hit_at_5": false,
+      "id": "entity-24-inactive",
+      "latency_ms": 3.783100051805377,
+      "llm_calls": 0,
+      "reranker_calls": 0,
+      "scope_signal": "off",
+      "wide_equivalent": true
+    }
+  ],
+  "commit": "1f7e5cc23875dccb4503979c8a05733b8f069e97",
+  "embedding_calls": 24,
+  "external_model_calls": 0,
+  "fixture_sha256": "2292d1e6354c7d507e629f0fa239949d71e75ed3ca106f7a9fa72ae774ea3205",
+  "latency_ms": {
+    "p50": 3.82829993031919,
+    "p95": 4.781800089403987
+  },
+  "llm_calls": 0,
+  "metrics": {
+    "cross_entity_top_1_count": 15,
+    "hit_at_1": 0.0,
+    "hit_at_5": 0.0
+  },
+  "mode": "observe",
+  "package_version": "1.0.0rc1",
+  "protocol_id": "hl-mem-entity-v1",
+  "python_version": "3.14.4",
+  "reranker_calls": 0,
+  "schema_version": 1
+}

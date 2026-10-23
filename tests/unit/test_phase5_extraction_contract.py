@@ -45,12 +45,12 @@ class _RecordingClient:
     [
         (
             "User prefers tea.",
-            "924a97fe6221a732c6fc7e2e333f247635743ba922f26cb258299797c66dcb4d",
+            "d3e2598480d52076cce85332aca393689d73bf83a7b293928d346337cdd2d238",
             "cb36a6a0e18592a5a89df2af6319e87da7a1b3d6d84b4cdb487c361f1a5d3336",
         ),
         (
             "用户喜欢喝茶。",
-            "560ee6c991b284fc10d49967031b299d239b0c49e8939e03e8a62863c546a3b5",
+            "c2c400ba6c8dcc55c97adceed4953f3b050cabe11190b153c463133f6b43ce40",
             "74df0124a2336d1613577e753dfacb030ca0fa5e969c5849fc02d4e16b05581a",
         ),
     ],
@@ -77,7 +77,7 @@ def test_provider_request_payload_is_frozen(source: str, system_hash: str, user_
     assert request.structured_output.preferred_mode == "json_schema"
     schema = json.dumps(request.structured_output.schema, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(schema.encode()).hexdigest() == (
-        "0734cd7c64303b46af49797ec8faccc9b491c1c04ab7b990483fb8bf794c227f"
+        "8760f63aee7ef02f5456b8769db018154e2e5ba1ef2103f0c4c3b1d85ad9b7ce"
     )
 
 

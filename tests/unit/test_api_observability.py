@@ -5,12 +5,16 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import sqlite3
 from dataclasses import replace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hl_mem.api.server import create_app
+from hl_mem.observability.usage_types import UsageAmount, UsageIdentity
+from hl_mem.plugins.contracts import ProviderCapability
 from hl_mem.settings import Settings
 
 
@@ -32,6 +36,49 @@ def test_healthz_endpoint_is_async(tmp_path) -> None:
     assert inspect.iscoroutinefunction(_route_endpoint(app, "/healthz"))
 
 
+def test_real_extractor_lifespan_projects_runtime_route_once(tmp_path) -> None:
+    database_path = tmp_path / "runtime-route.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(database_path),
+        extractor_mode="llm",
+        llm_provider="zhipu",
+        llm_model="glm-5.3-flash",
+        llm_base_url="https://example.invalid/v1",
+        embedding_dim=8,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/healthz").status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM events WHERE event_type='runtime_config_report'").fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM claims WHERE status='active' AND canonical_slot='choice.model' "
+                "AND json_extract(qualifiers_json,'$.task')='extraction' "
+                "AND json_extract(value_json,'$')='HL-Mem LLM 提取任务使用 zhipu/glm-5.3-flash'"
+            ).fetchone()[0]
+            == 1
+        )
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/healthz").status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM events WHERE event_type='runtime_config_report'").fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM claims WHERE json_extract(qualifiers_json,'$.runtime_config')=1"
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_healthz_provider_inventory_is_bounded_and_secret_free(tmp_path) -> None:
     settings = replace(
         Settings.for_test(),
@@ -50,6 +97,97 @@ def test_healthz_provider_inventory_is_bounded_and_secret_free(tmp_path) -> None
     serialized = response.text
     assert "never-expose-this-key" not in serialized
     assert settings.embedding_base_url not in serialized
+
+
+def test_healthz_provider_usage_preserves_detail_and_adds_daily_health(tmp_path) -> None:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "health-usage.db"),
+        embedder_mode="real",
+        embedding_api_key="test-key",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        usage = client.get("/healthz").json()["provider_usage"]
+
+    assert usage is not None
+    assert set(usage) == {
+        "date",
+        "settled",
+        "reserved",
+        "remaining",
+        "unknown_cost_count",
+        "counts_by_capability",
+        "price_book_configured",
+        "price_book_fingerprint",
+        "health",
+    }
+    assert usage["price_book_configured"] is False
+    assert usage["price_book_fingerprint"] is None
+    assert usage["health"] == {
+        "failures": 0,
+        "stale_reservations": 0,
+        "utilization": {"requests": None, "tokens": "0", "cost_microunits": None},
+        "unknown_outcomes": 0,
+        "unknown_costs": 0,
+    }
+
+
+@pytest.mark.parametrize("lease_expires_at", ["not-an-iso-timestamp", "2026-08-30T13:00:01.000000"])
+def test_healthz_degrades_invalid_or_naive_usage_lease_without_leaking_details(
+    tmp_path,
+    lease_expires_at: str,
+) -> None:
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(tmp_path / "health-invalid-lease.db"),
+        embedder_mode="real",
+        embedding_api_key="test-key",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        runtime = app.state.provider_runtime
+        reservation = runtime.governor.reserve(
+            UsageIdentity(
+                ProviderCapability.EMBEDDING,
+                "embed",
+                "hl-mem.builtin",
+                "openai_compatible",
+                "test-model",
+            ),
+            UsageAmount(requests=7),
+        )
+        ledger_path = runtime.governor.path
+        with sqlite3.connect(ledger_path) as connection:
+            connection.execute(
+                "UPDATE usage_reservations SET lease_expires_at=? WHERE id=?",
+                (lease_expires_at, reservation.id),
+            )
+
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    usage = response.json()["provider_usage"]
+    assert set(usage) == {
+        "date",
+        "settled",
+        "reserved",
+        "remaining",
+        "unknown_cost_count",
+        "counts_by_capability",
+        "price_book_configured",
+        "price_book_fingerprint",
+        "health",
+    }
+    assert usage["price_book_configured"] is False
+    assert usage["price_book_fingerprint"] is None
+    assert usage["health"] is None
+    assert lease_expires_at not in response.text
+    assert str(ledger_path) not in response.text
+    assert "user-defined function raised exception" not in response.text
 
 
 def test_request_lifecycle_logs_healthz_with_query_id(caplog, tmp_path) -> None:

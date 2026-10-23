@@ -49,6 +49,7 @@ def assemble_results(
         str(claim_id) for claim in claims for claim_id in [claim["id"], *(claim.get("_equivalent_claim_ids") or [])]
     ]
     all_evidence = evidence_repo.batch_get_links_for_derived("claim", evidence_claim_ids)
+    event_provenance = evidence_repo.batch_get_claim_event_provenance(evidence_claim_ids)
     superseded_ids = [claim["superseded_by_id"] for claim in claims if claim.get("superseded_by_id")]
     replacements = _replacement_map(claim_repo, superseded_ids, claim_text=claim_text)
     relations = get_relations_batch(connection, claim_ids)
@@ -62,7 +63,11 @@ def assemble_results(
                 key = (item["type"], item["id"])
                 if key not in evidence_keys:
                     evidence_keys.add(key)
-                    evidence.append(item)
+                    projected: dict[str, Any] = dict(item)
+                    provenance = event_provenance.get(str(claim_id), {}).get(item["id"])
+                    if provenance is not None:
+                        projected["provenance"] = provenance
+                    evidence.append(projected)
         superseded_by_id = claim.get("superseded_by_id")
         replacement = replacements.get(str(superseded_by_id)) if superseded_by_id else None
         result: dict[str, Any] = {

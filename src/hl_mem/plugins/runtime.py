@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
 
 import httpx
 
 from hl_mem.config.models import Settings
 from hl_mem.errors import ConfigurationError
+from hl_mem.observability.ops_report import UsageLedgerReader
+from hl_mem.observability.pricing import UsageCostEstimator, UsagePriceBook
 from hl_mem.observability.usage import (
+    UsageAmount,
     UsageGovernor,
     UsageIdentity,
     UsageLimits,
@@ -20,6 +26,8 @@ from hl_mem.plugins.proxies import GovernedProviderCall
 from hl_mem.plugins.registry import ProviderRegistry, build_provider_registry
 from hl_mem.plugins.transport import ProviderTransport
 
+_ESTIMATOR_UNSET = object()
+
 
 @dataclass
 class ProviderRuntime:
@@ -29,8 +37,10 @@ class ProviderRuntime:
     registry: ProviderRegistry
     _governor: UsageGovernor | None
     transport: ProviderTransport
+    _estimator: UsageCostEstimator | None = None
     _client: httpx.Client | None = None
     _owns_client: bool = False
+    _reservation_guard: Callable[[UsageIdentity, UsageAmount], None] | None = None
 
     @property
     def governor(self) -> UsageGovernor:
@@ -56,10 +66,28 @@ class ProviderRuntime:
             ),
             self.governor,
             self.transport,
+            estimator=self._estimator,
+            _reservation_guard=self._reservation_guard,
         )
 
     def usage_snapshot(self) -> dict[str, object] | None:
-        return None if self._governor is None else self._governor.snapshot()
+        if self._governor is None:
+            return None
+        return {
+            **self._governor.snapshot(),
+            "price_book_configured": self._estimator is not None,
+            "price_book_fingerprint": None if self._estimator is None else self._estimator.fingerprint,
+        }
+
+    def usage_health_snapshot(self) -> dict[str, object] | None:
+        if self._governor is None:
+            return None
+        now = datetime.now(timezone.utc)
+        return UsageLedgerReader(self._governor.path).health_summary(
+            day=now.date(),
+            limits=self._governor.limits,
+            now=now,
+        )
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:
@@ -73,10 +101,19 @@ def create_provider_runtime(
     entry_points: Any = None,
     client: httpx.Client | None = None,
     create_usage: bool = True,
+    _validated_estimator: UsageCostEstimator | None | object = _ESTIMATOR_UNSET,
+    _reservation_guard: Callable[[UsageIdentity, UsageAmount], None] | None = None,
 ) -> ProviderRuntime:
     """Validate Providers, recover reservations, and create process-owned state."""
 
     registry = build_provider_registry(settings, entry_points=entry_points)
+    estimator: UsageCostEstimator | None
+    if _validated_estimator is _ESTIMATOR_UNSET:
+        estimator = (
+            UsagePriceBook.load(Path(settings.usage_price_book_path)) if settings.usage_price_book_path else None
+        )
+    else:
+        estimator = cast(UsageCostEstimator | None, _validated_estimator)
     governor = None
     if create_usage:
         governor = UsageGovernor(
@@ -95,8 +132,10 @@ def create_provider_runtime(
         registry=registry,
         _governor=governor,
         transport=ProviderTransport(resolved_client),
+        _estimator=estimator,
         _client=resolved_client,
         _owns_client=client is None,
+        _reservation_guard=_reservation_guard,
     )
 
 

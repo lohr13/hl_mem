@@ -1,6 +1,6 @@
 [project]
 name = "hl-mem"
-version = "1.0.0rc1"
+version = "1.1.7"
 description = "Evidence-aware local memory service"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=2,<3"]
+mcp = ["mcp>=2.2,<3"]
 sqlite-vec = ["sqlite-vec>=0.1.9,<0.2"]
 
 [project.urls]
@@ -43,12 +43,13 @@ dev = [
     "black>=24.0",
     "build>=1.2",
     "isort>=5.13",
-    "mcp>=2,<3",
+    "mcp>=2.2,<3",
     "mypy>=1.10",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "pytest-timeout>=0.5",
+    "pytest-xdist>=3.6",
     "ruff>=0.5",
 ]
 
@@ -69,6 +70,7 @@ filterwarnings = [
 markers = [
     "benchmark: performance benchmarks excluded from default test discovery by file naming",
     "eval: offline evaluation tests that report metrics without enforcing quality thresholds",
+    "release_only: packaging and historical-upgrade checks run only before release",
 ]
 
 [tool.coverage.run]
@@ -126,6 +128,7 @@ exclude = [
     "/hl_mem.toml.bak*",
     "/var",
     "/docs/tasks",
+    "/docs/HANDOFF.md",
     "/evaluation",
     "/benchmarks",
 ]

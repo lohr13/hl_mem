@@ -31,6 +31,7 @@ AcceptedRubrics = tuple[AnswerRubric, ...]
 SCORER_VERSION = "deterministic-rubric-v2"
 ANSWER_ENTITY_SCORER_VERSION = "answer-entity-packet-v1"
 OVERALL_QA_ACCURACY_MINIMUM = 0.90
+_BRACKETED_ENTITY_TITLE_RE = re.compile(r"《[^《》]{1,80}》的?")
 
 # ── Monkey-patch QA to enable thinking for multi-hop reasoning ──────────────
 # The upstream _qa_dashscope_chat sends a plain completion without thinking.
@@ -715,6 +716,11 @@ def _normalized_answer(text: str) -> str:
     return "".join(character.lower() for character in text if character.isalnum())
 
 
+def _normalized_rubric_answers(text: str) -> tuple[str, ...]:
+    candidates = (_normalized_answer(text), _normalized_answer(_BRACKETED_ENTITY_TITLE_RE.sub("", text)))
+    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
 def score_answer_anchors(predicted: str, anchors: Sequence[str]) -> float:
     """Require every official PerLTQA answer anchor in the concise reader output."""
     predicted_text = _normalized_answer(predicted)
@@ -737,8 +743,8 @@ def score_answer(
             "scorer_version": SCORER_VERSION,
         }
 
-    predicted_text = _normalized_answer(predicted)
-    rubric_match = bool(predicted_text) and any(
+    predicted_texts = _normalized_rubric_answers(predicted)
+    rubric_match = bool(predicted_texts) and any(
         bool(rubric)
         and all(
             bool(concept)
@@ -746,6 +752,7 @@ def score_answer(
                 normalized_expression in predicted_text
                 for expression in concept
                 if (normalized_expression := _normalized_answer(expression))
+                for predicted_text in predicted_texts
             )
             for concept in rubric
         )
@@ -922,7 +929,8 @@ def evaluate_gate(
             failures.append(GateFailure(dataset, "failed_cases", failed_cases, 0.0))
         for field in fields(threshold):
             metric = field.name
-            actual = float(metrics.get(metric, math.nan))
+            raw_actual = metrics.get(metric, math.nan)
+            actual = 0.0 if raw_actual is None else float(raw_actual)
             minimum = float(getattr(threshold, metric))
             if not math.isfinite(actual) or actual < minimum:
                 failures.append(GateFailure(dataset, metric, actual, minimum))
@@ -1086,6 +1094,7 @@ def _run_accounting(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     cache_counts = Counter(str(ingest.get("cache_status") or "unknown") for ingest in unique_ingests.values())
     return {
         "cache_status_counts": dict(sorted(cache_counts.items())),
+        "claim_budget": memdaily_benchmark.aggregate_claim_budget_telemetry(tuple(unique_ingests.values())),
         "usage": {
             "extraction_input_tokens": sum(int(ingest.get("input_tokens", 0)) for ingest in unique_ingests.values()),
             "extraction_output_tokens": sum(int(ingest.get("output_tokens", 0)) for ingest in unique_ingests.values()),

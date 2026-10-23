@@ -12,6 +12,7 @@ from hl_mem.config.lifecycle import ExpiredCleanupMode as ExpiredCleanupMode
 from hl_mem.config.lifecycle import FeedbackLifecycleMode as FeedbackLifecycleMode
 from hl_mem.config.lifecycle import LifecycleConfig as LifecycleConfig
 from hl_mem.config.plugin_settings import PluginsConfig as PluginsConfig
+from hl_mem.config.runtime_validation import validate_runtime_modes
 from hl_mem.config.secrets import is_placeholder_secret
 from hl_mem.domain.claims.retention import TTLPolicy
 from hl_mem.errors import ConfigurationError
@@ -26,6 +27,7 @@ RelationExpansionMode = Literal["off", "on"]
 RelationDiscoveryMode = Literal["off", "audit"]
 ExtractorMode = Literal["fake", "real", "llm"]
 VerificationMode = Literal["off", "audit", "enforce"]
+MemoryDispositionMode = Literal["off", "observe", "enforce"]
 LLMProvider = str
 StructuredOutputModeName = Literal["auto", "json_object", "json_schema"]
 LLMThinkingControl = Literal["auto", "chat_template_kwargs"]
@@ -45,6 +47,7 @@ PriceTargetMode = Literal["off", "audit", "observe", "enforce"]
 PlanFulfillmentMode = Literal["off", "audit", "observe", "enforce"]
 EntityConstraintMode = Literal["off", "observe", "enforce"]
 LessonSignalMode = Literal["off", "observe", "enforce"]
+ProvenanceMode = Literal["observe", "enforce"]
 
 
 class VectorBackend(StrEnum):
@@ -64,15 +67,6 @@ def parse_daily_cron(value: str, variable_name: str) -> int:
 
 def _toml_field(default: Any, path: str) -> Any:
     return field(default=default, metadata={"toml": path})
-
-
-def _validate_runtime_modes(settings: "Settings") -> None:
-    if settings.entity_constraint_mode not in {"off", "observe", "enforce"}:
-        raise ConfigurationError("recall.entity_constraint_mode must be 'off', 'observe', or 'enforce'")
-    if settings.lesson_signal_mode not in {"off", "observe", "enforce"}:
-        raise ConfigurationError("extraction.lesson_signal_mode must be 'off', 'observe', or 'enforce'")
-    if settings.conflict_auto_mode not in {"off", "l0_only"}:
-        raise ConfigurationError("conflict.auto_mode must be 'off' or 'l0_only'")
 
 
 @dataclass(frozen=True)
@@ -165,6 +159,11 @@ class ExtractionConfig:
 
     lesson_signal_mode: LessonSignalMode = _toml_field("observe", "extraction.lesson_signal_mode")
 
+    memory_disposition_mode: MemoryDispositionMode = _toml_field(
+        "enforce",
+        "extraction.memory_disposition_mode",
+    )
+
     llm_api_key: str | None = field(
         default=None,
         repr=False,
@@ -199,7 +198,7 @@ class ExtractionConfig:
 
     llm_max_tokens: int | None = field(default=None, metadata={"toml": "llm.max_tokens"})
 
-    llm_timeout: float = field(default=90.0, metadata={"toml": "llm.timeout"})
+    llm_timeout: float = field(default=240.0, metadata={"toml": "llm.timeout"})
 
     llm_max_attempts: int = field(default=3, metadata={"toml": "llm.max_attempts"})
 
@@ -281,7 +280,7 @@ class RetrievalConfig:
 
     recall_candidate_floor: int = field(default=50, metadata={"toml": "recall.candidate_floor"})
 
-    entity_constraint_mode: EntityConstraintMode = _toml_field("observe", "recall.entity_constraint_mode")
+    entity_constraint_mode: EntityConstraintMode = _toml_field("enforce", "recall.entity_constraint_mode")
 
     recall_dedup_threshold: float = field(default=0.95, metadata={"toml": "recall.dedup_threshold"})
 
@@ -499,6 +498,7 @@ class GovernanceConfig:
 
     entity_aliases_path: str | None = field(default=None, metadata={"toml": "entity.aliases_path"})
 
+    provenance_mode: ProvenanceMode = field(default="enforce", metadata={"toml": "provenance.mode"})
     price_target_mode: PriceTargetMode = field(default="enforce", metadata={"toml": "price.target_mode"})
 
     plan_fulfillment_mode: PlanFulfillmentMode = field(default="enforce", metadata={"toml": "plan.fulfillment_mode"})
@@ -590,6 +590,12 @@ class ObservabilityConfig:
         metadata={"toml": "usage.daily_request_limit"},
     )
 
+    usage_price_book_path: str | None = field(
+        default=None,
+        repr=False,
+        metadata={"toml": "usage.price_book_path"},
+    )
+
     usage_daily_cost_limit_microunits: int = field(
         default=0,
         metadata={"toml": "usage.daily_cost_limit_microunits"},
@@ -672,13 +678,13 @@ class Settings(
             ("reranker.provider", self.reranker_provider),
             ("image_describer.provider", self.image_describer_provider),
         ]
-        if self.query_expansion_provider is not None:
-            providers.append(("recall.query_expansion_provider", self.query_expansion_provider))
         self.validate_plugins(providers)
         if self.max_request_body < 0:
             raise ConfigurationError("server.max_request_body must be non-negative")
         if type(self.usage_daily_request_limit) is not int:
             raise ConfigurationError("usage.daily_request_limit must be an integer")
+        if self.usage_price_book_path is not None and not self.usage_price_book_path.strip():
+            raise ConfigurationError("usage.price_book_path must not be empty")
         if type(self.usage_daily_cost_limit_microunits) is not int:
             raise ConfigurationError("usage.daily_cost_limit_microunits must be an integer")
         if type(self.usage_reservation_lease_seconds) is not int or self.usage_reservation_lease_seconds <= 0:
@@ -832,6 +838,12 @@ class Settings(
             raise ConfigurationError("recall.tag_boost_weight must be between 0 and 1")
         if self.query_expansion_mode not in {"off", "auto", "always"}:
             raise ConfigurationError("recall.query_expansion_mode must be 'off', 'auto', or 'always'")
+        if self.query_expansion_mode != "off":
+            if self.query_expansion_provider is not None:
+                self.validate_plugins([("recall.query_expansion_provider", self.query_expansion_provider)])
+            self.query_expansion_line_overrides()
+        if self.provenance_mode not in {"observe", "enforce"}:
+            raise ConfigurationError("provenance.mode must be 'observe' or 'enforce'")
         if self.query_context_mode not in {"off", "coreference"}:
             raise ConfigurationError("recall.query_context_mode must be 'off' or 'coreference'")
         if not 0 <= self.query_expansion_max <= 2:
@@ -915,7 +927,7 @@ class Settings(
             raise ConfigurationError("worker.job_lease_minutes must be positive")
         if not 1 <= self.conflict_maintenance_max_cases <= 1_000:
             raise ConfigurationError("worker.conflict_maintenance_max_cases must be between 1 and 1000")
-        _validate_runtime_modes(self)
+        validate_runtime_modes(self)
         if not 50 <= self.conflict_maintenance_budget_ms <= 10_000:
             raise ConfigurationError("worker.conflict_maintenance_budget_ms must be between 50 and 10000")
         if not 1 <= self.conflict_failure_backoff_seconds <= 86_400:
@@ -996,10 +1008,10 @@ class Settings(
         if not self.embedding_base_url.strip() or not self.embedding_model.strip():
             raise ConfigurationError("embedding.base_url and embedding.model are required in production")
 
-        query_expansion_line = self.query_expansion_line_overrides()
         required_secrets: dict[str, tuple[str | None, list[str]]] = {}
         llm_recovery = ["configure a production LLM service"]
         if self.query_expansion_mode != "off":
+            query_expansion_line = self.query_expansion_line_overrides()
             if query_expansion_line is None:
                 llm_recovery.append("recall.query_expansion_mode='off'")
             else:
@@ -1038,6 +1050,7 @@ class Settings(
             "schema_version": self.schema_version,
             "plugins_enabled": list(self.plugins_enabled),
             "usage_daily_request_limit": self.usage_daily_request_limit,
+            "price_book_configured": self.usage_price_book_path is not None,
             "usage_daily_cost_limit_microunits": self.usage_daily_cost_limit_microunits,
             "usage_reservation_lease_seconds": self.usage_reservation_lease_seconds,
             "embedder_mode": self.embedder_mode,
@@ -1116,6 +1129,7 @@ class Settings(
             "hermes_manual_conflict_notice": self.hermes_manual_conflict_notice,
             "verification_mode": self.verification_mode,
             "lesson_signal_mode": self.lesson_signal_mode,
+            "memory_disposition_mode": self.memory_disposition_mode,
             "llm_model": self.llm_model,
             "llm_provider": self.llm_provider,
             "llm_structured_mode": self.llm_structured_mode,

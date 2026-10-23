@@ -1,6 +1,13 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError as PydanticValidationError
+
+from hl_mem.api.schemas import EventInput
+from hl_mem.application.ingest import IngestService
+from hl_mem.errors import ConflictError
+from hl_mem.protocols import ImageDescription, ImageLocator
 from hl_mem.settings import Settings
 from hl_mem.storage.database import Database
 from hl_mem.storage.events import EventRepository
@@ -22,6 +29,97 @@ def test_event_repository_is_idempotent(tmp_path) -> None:
     assert repository.insert_event(event) is True
     assert repository.insert_event({**event, "id": "event-2"}) is False
     assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    database.close()
+
+
+def test_event_repository_preserves_provenance_and_defaults_legacy_callers(tmp_path) -> None:
+    database = Database(tmp_path / "provenance.db")
+    repository = EventRepository(database.open())
+    now = datetime.now(timezone.utc).isoformat()
+    base = {
+        "event_type": "message",
+        "actor_type": "user",
+        "content_json": "{}",
+        "occurred_at": now,
+        "recorded_at": now,
+    }
+
+    repository.insert_event({**base, "id": "known", "origin_class": "external", "session_kind": "cron"})
+    repository.insert_event({**base, "id": "legacy"})
+
+    assert (repository.get_event("known") or {})["origin_class"] == "external"
+    assert (repository.get_event("known") or {})["session_kind"] == "cron"
+    assert (repository.get_event("legacy") or {})["origin_class"] == "unknown"
+    assert (repository.get_event("legacy") or {})["session_kind"] == "unknown"
+    database.close()
+
+
+def test_event_input_validates_provenance_before_storage() -> None:
+    with pytest.raises(PydanticValidationError):
+        EventInput(content="test", origin_class="invented")
+    with pytest.raises(PydanticValidationError):
+        EventInput(content="test", session_kind="invented")
+
+
+def test_event_provenance_participates_in_idempotent_payload(tmp_path) -> None:
+    database = Database(tmp_path / "idempotent-provenance.db")
+    service = IngestService(database.open())
+    event = EventInput(
+        content="remember provenance",
+        origin_class="direct_user",
+        session_kind="interactive",
+    ).model_dump(exclude={"namespace", "tenant_id"})
+
+    service.ingest_event(event, idempotency_key="provenance-key")
+    with pytest.raises(ConflictError, match="different event payload"):
+        service.ingest_event(
+            {**event, "origin_class": "external"},
+            idempotency_key="provenance-key",
+        )
+    database.close()
+
+
+@pytest.mark.parametrize(
+    "source_origin,expected_origin",
+    [("direct_user", "direct_user"), ("external", "external_derived")],
+)
+def test_image_description_event_inherits_source_provenance(
+    tmp_path,
+    source_origin: str,
+    expected_origin: str,
+) -> None:
+    database = Database(tmp_path / f"image-{source_origin}.db")
+    repository = EventRepository(database.open())
+    source_event = {
+        "id": f"source-{source_origin}",
+        "event_type": "message",
+        "actor_type": "user",
+        "content": {"text": "image"},
+        "occurred_at": "2026-09-01T00:00:00+00:00",
+        "recorded_at": "2026-09-01T00:00:00+00:00",
+        "origin_class": source_origin,
+        "session_kind": "interactive",
+    }
+    repository.insert_event(source_event)
+
+    derived = repository.insert_image_description_event(
+        source_event,
+        0,
+        ImageDescription(
+            caption="diagram",
+            ocr_text="",
+            model="vision-test",
+            confidence=0.9,
+            locator=ImageLocator(
+                uri="https://example.test/image.png",
+                media_type="image/png",
+                sha256="abc123",
+            ),
+        ),
+    )
+
+    assert derived["origin_class"] == expected_origin
+    assert derived["session_kind"] == "interactive"
     database.close()
 
 

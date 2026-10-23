@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 import hl_mem.workers.worker as worker_module
 from hl_mem.ingest.chunking import ChunkingPolicy
@@ -55,16 +56,23 @@ def queue(
     *,
     event_type="message",
     content=None,
+    metadata=None,
+    actor_type="user",
+    origin_class="unknown",
+    session_kind="unknown",
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     EventRepository(connection).insert_event(
         {
             "id": event_id,
             "event_type": event_type,
-            "actor_type": "user",
+            "actor_type": actor_type,
             "content_json": json.dumps(content or {"text": "记住使用 SQLite"}, ensure_ascii=False),
+            "metadata_json": json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
             "occurred_at": now,
             "recorded_at": now,
+            "origin_class": origin_class,
+            "session_kind": session_kind,
         }
     )
     JobRepository(connection).insert_job(
@@ -77,6 +85,133 @@ def queue(
             "max_attempts": max_attempts,
         }
     )
+
+
+class CountingExtractor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def extract(self, _content):
+        self.calls += 1
+        return [ExtractedClaim(predicate="uses", value="SQLite", subject="hl_mem")]
+
+
+class FailingIfCalledImageDescriber:
+    model = "must-not-run"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def describe(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("excluded events must not reach image description")
+
+
+@pytest.mark.parametrize("session_kind", ["heartbeat", "subagent"])
+def test_worker_blocks_automated_session_before_extractor_call(tmp_path, session_kind) -> None:
+    path = tmp_path / f"{session_kind}.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="system", session_kind=session_kind)
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 0
+    assert extractor.calls == 0
+    assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+
+
+def test_worker_observe_mode_keeps_automated_extraction_flow(tmp_path) -> None:
+    path = tmp_path / "observe-heartbeat.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="observe",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="system", session_kind="heartbeat")
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert extractor.calls == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 1
+
+
+def test_worker_enforces_producer_exclusion_before_extractor_and_audits_reason(tmp_path) -> None:
+    path = tmp_path / "producer-excluded.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        memory_disposition_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(
+        connection,
+        actor_type="assistant",
+        origin_class="agent",
+        session_kind="cron",
+        metadata={"memory_disposition": "exclude"},
+        content={
+            "text": "自动生成的冲突裁决报告正文",
+            "images": [{"base64_data": "aW1hZ2U=", "mime_type": "image/png"}],
+        },
+    )
+    extractor = CountingExtractor()
+    image_describer = FailingIfCalledImageDescriber()
+    audit = RecordingAudit()
+
+    result = Worker(
+        settings,
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+        image_describer=image_describer,
+        audit_logger=audit,
+        connection=connection,
+    ).run_once()
+
+    filter_audit = next(event for event in audit.events if event[:2] == ("filter", "evaluated"))
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 0
+    assert extractor.calls == 0
+    assert image_describer.calls == 0
+    assert filter_audit[2] == "reject"
+    assert filter_audit[3]["reason"] == "excluded_by_producer_disposition"
+    assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+    stored_metadata = connection.execute("SELECT metadata_json FROM events").fetchone()["metadata_json"]
+    assert json.loads(stored_metadata) == {"memory_disposition": "exclude"}
+
+
+def test_worker_rechecks_provenance_for_already_queued_job(tmp_path) -> None:
+    path = tmp_path / "queued-regate.db"
+    settings = replace(
+        Settings.for_test(),
+        database_path=str(path),
+        embedding_dim=8,
+        provenance_mode="enforce",
+    )
+    connection = Database(path, settings=settings).open()
+    queue(connection, origin_class="direct_user", session_kind="interactive")
+    connection.execute("UPDATE events SET origin_class='system',session_kind='subagent' WHERE id='event'")
+    connection.commit()
+    extractor = CountingExtractor()
+
+    result = Worker(settings, extractor=extractor, embedder=FakeEmbedder(8)).run_once()
+
+    assert result["status"] == "succeeded"
+    assert extractor.calls == 0
 
 
 def test_run_once_extracts_and_completes(tmp_path) -> None:
@@ -192,6 +327,56 @@ class OneClaimLLMClient(NoClaimsLLMClient):
             "stop",
             4,
         )
+
+
+class OverflowLLMClient(NoClaimsLLMClient):
+    def __init__(self, values: list[str]) -> None:
+        self.values = values
+        self.calls = 0
+
+    def complete(self, _request):
+        self.calls += 1
+        claims = [
+            {
+                "subject": "user",
+                "value": value,
+                "kind": "fact",
+                "confidence": 0.9,
+                "notability": "medium",
+                "evidence_quote": value,
+                "source_event_indices": [0],
+            }
+            for value in self.values
+        ]
+        return LLMResponse(json.dumps({"claims": claims, "should_memorize": True}), "stop", 20)
+
+
+def test_worker_completes_overflowing_extraction_in_one_attempt(tmp_path) -> None:
+    path = tmp_path / "claim-budget.db"
+    connection = Database(path).open()
+    values = [f"The user recorded durable item {index}" for index in range(25)]
+    queue(connection, content={"text": "\n".join(values)})
+    client = OverflowLLMClient(values)
+    extractor = LLMExtractor(
+        client,
+        ChunkingPolicy(10_000, 0, 2),
+        soft_split_enabled=True,
+        delta_repair_enabled=True,
+    )
+    worker = Worker(
+        replace(Settings.for_test(), database_path=str(path), embedding_dim=8),
+        extractor=extractor,
+        embedder=FakeEmbedder(8),
+    )
+
+    result = worker.run_once()
+
+    job = connection.execute("SELECT status,attempts FROM jobs WHERE id='job'").fetchone()
+    assert result["status"] == "succeeded"
+    assert result["claims"] == 24
+    assert (job["status"], job["attempts"]) == ("succeeded", 1)
+    assert client.calls == 1
+    assert connection.execute("SELECT count(*) FROM claims").fetchone()[0] == 24
 
 
 class CustomVersionLLMExtractor(LLMExtractor):

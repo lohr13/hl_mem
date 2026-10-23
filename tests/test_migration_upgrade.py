@@ -6,7 +6,11 @@ import sqlite3
 import struct
 from pathlib import Path
 
+import pytest
+
 from hl_mem.storage.database import Database
+
+pytestmark = pytest.mark.release_only
 
 MIGRATION_DIR = Path(__file__).resolve().parents[1] / "src/hl_mem/storage/migrations"
 V010_FIXTURE = Path(__file__).resolve().parent / "fixtures/v010_after_018.sql"

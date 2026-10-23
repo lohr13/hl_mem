@@ -94,18 +94,31 @@ def test_init_requires_force_before_overwriting_existing_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path = tmp_path / "hl_mem.toml"
+    deployment_root = tmp_path / "deployment"
+    deployment_root.mkdir()
+    deployment_env = deployment_root / ".env"
+    original_deployment_env = "DEPLOYMENT_ONLY=keep\n"
+    deployment_env.write_text(original_deployment_env, encoding="utf-8")
+    monkeypatch.chdir(deployment_root)
+
+    config_path = tmp_path / "config" / "hl_mem.toml"
+    env_path = tmp_path / "test-secrets.env"
+    config_path.parent.mkdir()
     config_path.write_text("keep-me", encoding="utf-8")
 
     with pytest.raises(SystemExit) as error:
-        main(["init", "--config", str(config_path)])
+        main(["init", "--config", str(config_path), "--env-file", str(env_path)])
 
     assert error.value.code == 2
     assert config_path.read_text(encoding="utf-8") == "keep-me"
 
-    _wizard_answers(monkeypatch)
-    main(["init", "--force", "--config", str(config_path)])
+    llm_secret, embedding_secret = _wizard_answers(monkeypatch)
+    main(["init", "--force", "--config", str(config_path), "--env-file", str(env_path)])
     assert config_path.read_text(encoding="utf-8").startswith("schema_version = 1\n")
+    secret_file = env_path.read_text(encoding="utf-8")
+    assert f"LLM_API_KEY={llm_secret}\n" in secret_file
+    assert f"EMBEDDING_API_KEY={embedding_secret}\n" in secret_file
+    assert deployment_env.read_text(encoding="utf-8") == original_deployment_env
 
 
 def test_init_preserves_unrelated_env_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

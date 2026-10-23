@@ -18,8 +18,8 @@ class ChannelRequest:
     known_as_of: str | None
     namespace: str
     dense_enabled: bool
-    entity_constraint_mode: str
-    entity_filter_id: str | None
+    entity_scope_mode: str
+    entity_scope_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,9 @@ class CollectedChannels:
     fts_us: int
     dense_us: int
     filtered_ids: frozenset[str]
+    entity_scope_applied: bool
+    entity_scope_counts: dict[str, int]
+    entity_scope_us: int
 
 
 def collect_query_channels(
@@ -40,48 +43,75 @@ def collect_query_channels(
     """Collect one weighted query without introducing a new retrieval channel or score."""
 
     label = "original" if index == 0 else f"expansion_{index}"
-    started = time.perf_counter_ns()
-    raw_fts = [
-        dict(claim)
-        for claim in repo.search_claims_fts(
-            item.text,
-            request.candidate_limit,
-            request.reference,
-            request.selected_intent,
-            request.known_as_of,
-            namespace=request.namespace,
-        )
-    ]
-    fts_us = (time.perf_counter_ns() - started) // 1000
-    fts = apply_entity_constraint(
-        getattr(repo, "connection", None),
-        raw_fts,
-        request.entity_constraint_mode,
-        request.entity_filter_id,
-    )
-    channels = [(f"{label}:fts", fts.items, item.weight, 1.0)]
-    dense_us = 0
-    filtered_ids = set(fts.filtered_ids)
-    if request.dense_enabled:
+    scoped = request.entity_scope_mode in {"entity", "enforce"} and request.entity_scope_id is not None
+    scope_started = time.perf_counter_ns() if scoped else 0
+
+    def read(entity_id: str | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
         started = time.perf_counter_ns()
-        raw_dense = [
+        fts = [
             dict(claim)
-            for claim in repo.search_claims_vector(
-                blob,
+            for claim in repo.search_claims_fts(
+                item.text,
                 request.candidate_limit,
                 request.reference,
                 request.selected_intent,
                 request.known_as_of,
                 namespace=request.namespace,
+                entity_id=entity_id,
             )
         ]
-        dense_us = (time.perf_counter_ns() - started) // 1000
-        dense = apply_entity_constraint(
+        fts_us = (time.perf_counter_ns() - started) // 1000
+        dense: list[dict[str, Any]] = []
+        dense_us = 0
+        if request.dense_enabled:
+            started = time.perf_counter_ns()
+            dense = [
+                dict(claim)
+                for claim in repo.search_claims_vector(
+                    blob,
+                    request.candidate_limit,
+                    request.reference,
+                    request.selected_intent,
+                    request.known_as_of,
+                    namespace=request.namespace,
+                    entity_id=entity_id,
+                )
+            ]
+            dense_us = (time.perf_counter_ns() - started) // 1000
+        return fts, dense, fts_us, dense_us
+
+    raw_fts, raw_dense, fts_us, dense_us = read(request.entity_scope_id if scoped else None)
+    entity_scope_us = (time.perf_counter_ns() - scope_started) // 1000 if scoped else 0
+
+    filtered_ids: set[str] = set()
+    if request.entity_scope_mode == "observe" and request.entity_scope_id is not None:
+        shadow_fts = apply_entity_constraint(
             getattr(repo, "connection", None),
-            raw_dense,
-            request.entity_constraint_mode,
-            request.entity_filter_id,
+            raw_fts,
+            "observe",
+            request.entity_scope_id,
         )
-        channels.append((f"{label}:dense", dense.items, item.weight, 1.0))
-        filtered_ids.update(dense.filtered_ids)
-    return CollectedChannels(tuple(channels), fts_us, dense_us, frozenset(filtered_ids))
+        filtered_ids.update(shadow_fts.filtered_ids)
+        if request.dense_enabled:
+            shadow_dense = apply_entity_constraint(
+                getattr(repo, "connection", None),
+                raw_dense,
+                "observe",
+                request.entity_scope_id,
+            )
+            filtered_ids.update(shadow_dense.filtered_ids)
+
+    channels = [(f"{label}:fts", raw_fts, item.weight, 1.0)]
+    counts = {"fts": len(raw_fts)}
+    if request.dense_enabled:
+        channels.append((f"{label}:dense", raw_dense, item.weight, 1.0))
+        counts["dense"] = len(raw_dense)
+    return CollectedChannels(
+        tuple(channels),
+        fts_us,
+        dense_us,
+        frozenset(filtered_ids),
+        scoped,
+        counts,
+        entity_scope_us,
+    )

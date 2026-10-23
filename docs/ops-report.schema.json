@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "conflicts": {
+      "type": "object"
+    },
+    "files": {
+      "type": "object"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "jobs": {
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "usage": {
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "window": {
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "until": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "since",
+        "until"
+      ],
+      "type": "object"
+    },
+    "worker": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "generated_at",
+    "window",
+    "usage",
+    "jobs",
+    "conflicts",
+    "worker",
+    "files",
+    "warnings"
+  ],
+  "title": "HL-Mem operational report",
+  "type": "object"
+}

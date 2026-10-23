@@ -183,12 +183,24 @@ class GovernedImageDescriber:
                     input_tokens=result.input_tokens or 0,
                     output_tokens=result.output_tokens or 0,
                     images=1,
+                    unknown_units=frozenset(
+                        unit
+                        for unit, value in (
+                            ("input_tokens", result.input_tokens),
+                            ("output_tokens", result.output_tokens),
+                        )
+                        if value is None
+                    ),
                 ),
             )
 
         result = self._governed.execute_factory(
             lambda: self.provider.build_request(call_endpoint, validated),
-            UsageAmount(requests=1, images=1),
+            UsageAmount(
+                requests=1,
+                images=1,
+                unknown_units=frozenset({"input_tokens", "output_tokens"}),
+            ),
             parse,
             max_attempts=call_endpoint.max_attempts,
             settlement_status=lambda _value: usage_status,

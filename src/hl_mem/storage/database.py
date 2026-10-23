@@ -17,6 +17,7 @@ from hl_mem.settings import Settings, VectorBackend
 from hl_mem.storage.migrations.backfill_conflict_key_v2 import backfill_conflict_keys_v2
 from hl_mem.storage.migrations.backfill_conflict_key_v3 import backfill_conflict_keys_v3
 from hl_mem.storage.migrations.backfill_subject_canonicalization import (
+    LEGACY_DATA_MIGRATION_VERSION,
     backfill_subject_canonicalization,
 )
 from hl_mem.storage.migrations.fact_hash_v2 import backfill_fact_hash_v2
@@ -40,6 +41,18 @@ _PRE_GUARD_DATA_MIGRATIONS = (
     "016_data_conflict_key_v3",
     "038_data_subject_canonicalization_v2",
 )
+
+
+def known_migration_versions() -> frozenset[str]:
+    """Return every migration marker this binary can safely read."""
+    migration_dir = Path(__file__).with_name("migrations")
+    return frozenset(
+        (
+            *_PRE_GUARD_DATA_MIGRATIONS,
+            LEGACY_DATA_MIGRATION_VERSION,
+            *(path.stem for path in migration_dir.glob("*.sql")),
+        )
+    )
 
 
 def register_entity_sqlite_functions(connection: sqlite3.Connection) -> None:

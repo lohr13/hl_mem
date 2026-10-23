@@ -14,7 +14,7 @@ def _write_wheel(path: Path, members: list[str]) -> Path:
 
 
 def test_wheel_requires_stable_evaluation_runner(tmp_path: Path) -> None:
-    wheel = _write_wheel(tmp_path / "hl_mem.whl", ["hl_mem/__init__.py"])
+    wheel = _write_wheel(tmp_path / "hl_mem.whl", ["hl_mem/__init__.py", "hl_mem/py.typed"])
 
     assert check_wheel(wheel) == ["missing stable evaluation module: hl_mem/evaluation/runner.py"]
 
@@ -22,7 +22,7 @@ def test_wheel_requires_stable_evaluation_runner(tmp_path: Path) -> None:
 def test_wheel_rejects_repository_benchmarks(tmp_path: Path) -> None:
     wheel = _write_wheel(
         tmp_path / "hl_mem.whl",
-        ["hl_mem/evaluation/runner.py", "benchmarks/archive/v030/example.py"],
+        ["hl_mem/evaluation/runner.py", "hl_mem/py.typed", "benchmarks/archive/v030/example.py"],
     )
 
     assert check_wheel(wheel) == ["repository benchmark leaked into wheel: benchmarks/archive/v030/example.py"]
@@ -31,10 +31,16 @@ def test_wheel_rejects_repository_benchmarks(tmp_path: Path) -> None:
 def test_v030_rejection_is_activated_by_release_gate(tmp_path: Path) -> None:
     wheel = _write_wheel(
         tmp_path / "hl_mem.whl",
-        ["hl_mem/evaluation/runner.py", "hl_mem/evaluation/v030_corpus.py"],
+        ["hl_mem/evaluation/runner.py", "hl_mem/py.typed", "hl_mem/evaluation/v030_corpus.py"],
     )
 
     assert check_wheel(wheel) == []
     assert check_wheel(wheel, reject_v030=True) == [
         "historical v0.30 evaluation leaked into wheel: hl_mem/evaluation/v030_corpus.py"
     ]
+
+
+def test_wheel_requires_public_typing_marker(tmp_path: Path) -> None:
+    wheel = _write_wheel(tmp_path / "hl_mem.whl", ["hl_mem/evaluation/runner.py"])
+
+    assert check_wheel(wheel) == ["missing PEP 561 marker: hl_mem/py.typed"]

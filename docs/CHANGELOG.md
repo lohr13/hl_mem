@@ -1,5 +1,176 @@
 # HL-Mem 变更记录
 
+## v1.1.7（2026-09-08）
+
+- 修复中等级别的系统自产文本回灌：Hermes cron assistant Event 现在显式携带
+  `metadata.memory_disposition = "exclude"`，默认在图片描述、LLM 提取和 Claim 写入前被过滤；原始 Event 与无正文审计
+  继续保留，避免裁决、维护或诊断报告被重新提取后反复扩大冲突组。
+- 新增 `extraction.memory_disposition_mode = "off" | "observe" | "enforce"`，默认 `enforce`；`observe` 仅记录
+  `excluded_by_producer_disposition` 后保持旧提取行为，`off` 忽略标记。旧客户端缺少 metadata、metadata 畸形或值未知时
+  一律 fail-open，不根据正文、origin 或自由文本相似度猜测。
+- 本次无数据库 migration、存量 Claim 改写或 REST/MCP 变更；不改变 conflict_key、语义归并、来源权威规则及已退役的
+  conflict L2 链路。
+
+## v1.1.6（2026-09-08）
+
+- LongMemEval 聚合按 eligible case 计算 R@10：合并前校验数据集分片，只把具备有效检索结果的样本计入分母，避免缺失或不可评样本稀释召回率。
+- 金额与测量值冲突准入要求 subject、predicate、slot、单位及测量对象身份一致；对象不同或身份不足时不再错误进入 temporal quarantine，修复生产写入边界。
+- Reader 任务改为依据问题语义分流，不读取 benchmark label 或 gold answer；对普通问答与时序问答选择各自的回答路径，避免评测标签泄漏。
+- Reader 证据窗口保留关系证据与完整事实句，句子边界内裁剪上下文，避免关键主谓宾或时间限定被窗口截断。
+- Temporal grounding 依据事件关系与 applicable time 选择支撑事件，避免仅按记录顺序绑定时间，提升时序答案的证据一致性。
+- 拆分摄入解析与 temporal/measurement 辅助函数，在不改变行为的前提下满足复杂度棘轮预算。
+- **配置兼容性提醒（breaking-ish）**：提取岗的正式默认配置为 `provider = "dashscope"`、
+  `base_url = "https://coding.dashscope.aliyuncs.com/v1"`、`model = "qwen3.7-plus"`，默认超时由 90 秒提高到
+  240 秒。未在 `hl_mem.toml` 显式覆盖 LLM 坐标的升级用户，必须让 `LLM_API_KEY` 包含可访问该 DashScope
+  coding 端点的密钥；继续使用其他供应商时应显式配置 provider、base URL、model 与对应密钥。
+
+## v1.1.5（2026-09-05）
+
+- 提取 Prompt 恢复原子 claim 粒度：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句（「用户要做X」
+  与「X 的属性」）与可分别回答的枚举必须逐项拆分，枚举中的每项及数量、单位分别保留。普通目标 12→20 条、
+  硬上限 16→24 条（依据：同日真复刻对照实验提取量 223→352、关键事件枚举密度 7→19）；单次确定性截断
+  语义不变；公共 REST/MCP/CLI、数据库 schema、配置 schema 与 Provider Plugin API 均不改变。
+- 实体查询在 enforce 模式下遇到纯第一人称代词（我/我们/I/me 等）时不再生成实体窄化过滤，改为宽召回并记录
+  `fallback_reason=pronoun_only`；其余实体窄化与宽召回行为保持不变。
+- 付费评测运行新增 fail-closed 身份门（`evaluation/tools/run_identity_gate.py`）：运行前后校验 git HEAD、
+  仓库根、LLM 提取器版本、配置 SHA256 与结果 manifest 数量，任一不匹配即抛 `EvaluationIdentityError`；
+  MemDaily 基准运行器已接入该门。该门只作用于评测工具，不进入运行时链路。
+- 评测工具：MemDaily 基准报告提取 cap 命中 telemetry；中文 e2e rubric 接受评分中的方括号实体插入；
+  预注册提取 cap A/B v2 协议文档（`docs/research/2026-09-04-p1-extraction-ab-v2-protocol.md`）。
+
+## v1.1.4（2026-09-03）
+
+- 提取 Prompt 现在保留明确归因的个人观点、理解、感受、行为原因和实践原则，并把“姓名：发言”中的第一人称绑定到姓名；问题、未采纳引语、助手通识及助手自我陈述继续排除。
+- 已完成动作、当前状态和已生效决定归为 fact；只有明确仍待执行的行动归为 plan。每个 plan 的 TTL 统一从记录时间与最新发生边界中的较晚者起算，durable 与 episodic 不再分叉。
+- 继续使用普通 12 条、硬上限 16 条和单次确定性截断；未增加二次模型、动态路由、Migration 或历史 Claim 改写。
+- 测试执行按 focused、核心和 `release_only` 三层路由；普通 CI 只在 Python 3.13 运行一次四进程核心全套，发布门禁
+  集中运行一次迁移、外部 Provider wheel、构建安装与供应链验证。Reader replay 状态场景改用小 fixture，完整
+  3×40 编排契约仍保留；该文件 143 项测试由 24.68 秒降至 3.85 秒。参考 Windows 主机的最终核心全套为
+  3262 passed、8 skipped、108 subtests passed，覆盖率 87.52%，耗时 253.33 秒，较约 375.7 秒串行基线缩短约
+  33%，但未达到 180–210 秒观察目标；发布层为 5 passed、1 skipped，耗时 36.30 秒。这些改动不影响运行时行为。
+
+## v1.1.3（2026-09-02）
+
+- Fix resource warning in load-attempt sentinel.
+- 提取 Prompt 改为优先生成上下文完整的记忆：普通输出目标不超过 12 条，每 chunk 硬上限 16 条；不再为每个
+  数字、属性或从句机械拆分 Claim。
+- 合法超量响应按 notability、confidence 与原始顺序确定性保留前 16 条并记录审计，不再触发 Claim 数量驱动的
+  二分、delta repair 或模型重试；provider 真实输出截断的有界二分恢复保持不变。旧 soft-split 配置继续接受但为 no-op。
+
+## v1.1.2（2026-09-02）
+
+- Hermes 插件现在会在加载早期向 `state/hl_mem-load.log` 追加一条独立哨兵记录；即使后续 HL-Mem 导入失败，
+  运维人员仍可确认加载尝试、时间、进程与可用版本信息。
+- Hermes 安装与升级完成后新增只读部署体检，主动提示 editable dist-info 残留、源码树晚于网关启动时间，
+  以及目标插件副本与包内模板不一致；体检不会重启服务或修改部署状态。
+
+## v1.1.1（2026-09-02）
+
+- 打包修复：sdist 排除 `docs/HANDOFF.md` 过程文档。该文件在 v1.1.0 的源码包中意外发布（内容为无害的项目状态
+  总结，不含任何密钥或敏感信息）；自本版本起不再进入发布物。无运行时行为变化。
+
+## v1.1.0（2026-09-02）
+
+- 将经过三轮候选发布、完整自动门禁和本地真实部署的 `1.1.0rc3` 提升为稳定版；可执行行为、数据库
+  schema、公共 REST/MCP/CLI、配置 schema 与 Provider Plugin API 均不再改变。
+- 1.1 稳定线包含高置信实体约束、Provider 费用与运行观测、真实外部 Provider 插件实证、来源/session
+  治理、只读 Claim 解释，以及 Recall 与 LLMExtractor 职责收口；没有增加 Graph、额外实体 LLM 或新的
+  权威存储。
+- 类型化模型坐标要求主体、slot 与任务限定符完整一致；历史模型声明修复保持只读优先、显式应用、精确
+  计数与 selection token 保护，不增加后台循环、模型调用或自动历史改写。
+
+## v1.1.0rc3（2026-09-02）
+
+### 类型化模型坐标与历史替代
+
+- 将 RC2 的来源约束坐标解析扩展到回答、Reader、Judge、Embedding、Reranker 等受控任务；只有原始 Evidence
+  与任务限定主体同时证明唯一任务时才形成 `choice.model + task` 坐标，模型名本身不作为任务证据，模糊声明继续保留但不参与自动替代。
+- 当前声明继续复用既有原子 conflict/state-change 事务，只替代完整同主体、同 slot、同 task 的旧声明；未扩大
+  `state_latest_wins`，未增加 Worker、Migration、配置或任何模型调用。
+- 新增 `hl-mem coordinates repair-model-history`：默认只读，`--apply` 必须同时提供 `--expected-count` 和只读结果的
+  `--selection-token`，候选或权威新值变化即拒绝执行；仅把有
+  原始 Evidence、明确属于 HL-Mem 提取任务且早于唯一运行配置投影的存量声明纳入替代链，不改写或删除历史正文。
+- TTL 到期与 expired history 回收保持原样；RC3 处理的是未到期但已被同坐标权威新值替代的声明。
+
+## v1.1.0rc2（2026-09-02）
+
+### 提取模型声明坐标修复
+
+- 对来源证据明确指向 HL-Mem 提取任务的自然语言模型声明，确定性归一为 canonical HL-Mem 主体与
+  `choice.model + task=extraction` 坐标；无法证明任务或主体的声明继续保持未归一状态，避免扩大冲突域。
+- 服务启动时用当前 LLM Provider/模型生成一条幂等、可审计的运行配置观察，不调用 LLM、Embedding 或
+  Reranker；模型改变时沿用既有冲突与 supersede 链，Reader/Judge 等其他任务坐标不受影响。
+- 运行投影只以 Provider、模型和生产契约计算指纹；服务地址、推理参数等不改变“当前提取模型”事实的选项
+  不会反复写入。未新增 Migration、后台清理任务或宽泛 latest-wins 规则。
+- 在生产数据库在线副本验证：旧提取模型声明退出有效集合，当前模型查询返回正确结果，Reader/Judge 声明
+  保持不变；`v1.1.0rc1` 标签与已发布包保持不可变。
+
+## v1.1.0rc1（2026-09-01）
+
+### 来源治理、可解释性与发布硬化
+
+- Event 新增 `origin_class` 与 `session_kind` 两个受控字段；旧 API、旧归档和历史行默认 `unknown`，不做历史
+  重分类。Hermes 从结构化 session/tool 元数据确定性标记来源；外部 Tool 后的 Agent 转述保持
+  `external_derived`，不使用 LLM 猜测来源或核验事实。
+- `[provenance].mode="enforce"` 下，外部/cron 内容仍可保存，但只形成低权威、带时间和 Evidence 的观察；
+  heartbeat/subagent Event 保留，自动提取在任何模型调用前终止。`observe` 只记录决策，未知宿主保持 1.0 行为。
+- 新增只读 `hl-mem explain claim <id> [--json]`；Context Packet 的既有 `evidence[]` 可携带有界来源提示，Hermes
+  对外部或自动来源只增加一条计入 token 预算的安全说明。Claim 正文、Tool 输出、URL 凭据/路径/查询和密钥
+  不进入解释或提示。
+- Query Expansion 在 `mode=off` 时忽略停放的线路覆盖，活动模式仍 fail-closed；Hermes install/doctor 明示
+  `<HERMES_HOME>` 配置归属，并检测 gateway 进程内已加载版本与当前安装/Git 身份的分叉。
+
+- `hl-mem ops report` 在 Hermes 已启用时优先读取受 64 KiB 上限保护的 `/healthz` Worker 快照；服务不可达时仍回退到只读任务心跳，避免空闲 Worker 被误报为停止。失败告警只覆盖所选报告窗口，历史 dead 任务仍保留计数但不形成永久告警；两条路径均不读取或输出业务正文。
+
+### Phase 4：提取职责收口与遗留清理
+
+- `LLMExtractor` 保持兼容门面和 Claim 准入/投影语义；分块、schema 重试、截断二分、soft split、delta repair、
+  运行状态与调用计量迁入聚焦的 extraction 内部模块，现有 Prompt、调用顺序和静态兼容 helper 保持不变。
+- 删除不提供仓储语义的 PostgreSQL 连通性探针；当前能力文档不再展示已于 1.0 退役的 extraction pre-filter 与
+  独立 Tag 候选通道。SQLite 仍是唯一受支持的权威存储，Tag soft boost 保留。
+
+### Phase 3：外部 Provider 实证与 Recall 职责收口
+
+- 独立构建 `hl-mem-provider-dashscope` 参考插件，仅依赖公开 `hl_mem.plugins` 契约并提供 LLM、Embedding、
+  Reranker 三类稳定适配器；干净 Python 3.12 环境验证了未启用不导入、显式 allowlist、版本协商、故障隔离和
+  内置 Provider 健康保持，未增加新的公共插件能力。
+- 真实混合链路使用智谱 Coding Plan 完成 LLM 提取，并由外部插件完成 DashScope Embedding 与 Reranker；固定
+  持久化、四类召回、受控重排失败回退、预算结算和预留释放全部通过。该验证未调用外部插件的 LLM 适配器，
+  不把一次合成冒烟表述为质量或可用性基准。
+- 将 Recall 查询规划迁入 `recall.query_planning`，访问/曝光写副作用迁入现有
+  `application.recall_side_effects`，`RecallService` 保持编排和兼容 patch point；未改变候选、排序、交付或公共
+  REST/MCP/CLI 语义。
+- Provider 冒烟将 `expected_claim_count` 解释为可持久化事实下界，允许真实模型对同一证据做更细的安全拆分；
+  召回与持久化固定检查仍必须全部通过，避免把模型粒度波动误判为 Provider 链路故障。
+
+### Phase 2：精确实体召回
+
+- 高置信实体查询在 FTS/Dense 候选截断前限定到唯一 typed canonical entity；历史 alias、歧义、多实体、链接不完整
+  或存储异常自动回退原始宽召回，不新增召回通道、LLM 调用或正常查询 Embedding 调用。
+- `recall.entity_constraint_mode` 默认从 `observe` 改为 `enforce`；显式 `observe` 与 `off` 保持原语义，配置迁移不重写
+  用户选择。Trace 只记录实体范围、计数、耗时和回退原因，不保存查询或残余文本。
+- 24 案冻结合成门禁中，15 个高置信实体案例全部 Top 5 命中，跨实体 Top 1 从 15 降为 0，9 个宽召回案例与
+  1.0 基线一致；Embedding 调用仍为每题 1 次，LLM/Reranker/外部调用为 0。Core 1.0 的 Recall@1、Recall@5、
+  MRR 分别保持 `0.75`、`0.7917`、`0.7639`，不将该合成结果表述为真实总体 Recall。
+
+### Phase 1：Provider 运行观测与真实链路证据
+
+- 新增只读 `hl-mem ops report`，聚合 Provider 调用量、Token、费用、延迟和失败，以及 Worker、任务、数据库与
+  WAL 状态；`/healthz` 保持低成本聚合，不执行模型探测。
+- 新增宿主拥有的可选 CNY 价格表；调用在发送前按保守上界原子预留，按实际用量结算，无法确定费用时继续
+  fail-closed，价格文件和来源信息不会进入插件或运行事件。
+- 2026-09-01 完成一次脱敏的内置 Provider 冒烟：LLM 使用智谱 GLM-5.3-Flash（Coding Plan 配额），Embedding 与
+  Reranker 使用 DashScope Qwen 模型；共结算 1 次 LLM 请求、9 个 Embedding item 和 16 个重排文档，价格表聚合
+  费用为 732,077 microunits（CNY 0.732077），活动预留为 0，固定持久化、召回、受控重排失败回退及预算检查
+  全部通过。该证据只代表一次有界合成链路验证，不作为召回质量、服务可用性或未来账单承诺。
+
+## v1.0.0（2026-09-01）
+
+- 将已完成真实 Provider、摄入、召回、迁移与恢复验证的 `1.0.0rc1` 提升为首个稳定版；运行时行为、数据库
+  schema、公共 REST/MCP/CLI 与 Provider 契约均未改变。
+- 删除与常规 Tests、release-gates 和每日 quality smoke 重复的 RC 日期证据工作流及远端 artifact 验证器；
+  稳定发布改为本地真实链路观察后，由同一稳定提交的一次常规 GitHub Tests 结果把关。
+
 ## v1.0.0rc1（2026-08-31）
 
 ### Core 1.0 Phase 6：可审计发布候选
@@ -8,7 +179,7 @@
   fixture 缺失而跳过，空库、历史库和重复 migration 均进入发布证据。
 - 新增确定性的发布证据清单、`v0.36.1` 冻结 Benchmark、依赖漏洞扫描、CycloneDX SBOM、CodeQL、完整
   Git 历史密钥扫描和全 SHA 固定的 GitHub Actions。发布门禁只验证，不自动上传 PyPI。
-- `1.0.0rc1` 必须连续观察七个 UTC 日期且没有未关闭 P0/P1，才允许提升为稳定版；SQLite 仍只支持
+- `1.0.0rc1` 通过本地真实部署观察与稳定提交的常规 GitHub Tests 后允许提升为稳定版；SQLite 仍只支持
   备份恢复，不提供 schema downgrade。
 - `report-version` 可记录严格的 `MAJOR.MINOR.PATCHrcN` 运行时版本；预发布版本仍保留在 latest-wins
   灰区，不获得稳定版本自动关链权限。

@@ -4,7 +4,7 @@
 
 HL-Mem 是面向 AI Agent 的本地优先记忆系统。核心设计：事件溯源双通道 + 双时间模型 + 证据链 + slot+tags 分类体系 + importance 联动 TTL + 多因子召回 + 完整生命周期管理。
 
-**当前版本：v1.0.0rc1（2026-08-31）**
+**当前版本：v1.1.7（2026-09-08）**
 
 ## 技术栈
 
@@ -107,11 +107,27 @@ src/hl_mem/
 
 ## 测试
 
-```bash
-.venv/Scripts/python.exe -m pytest tests/unit/ -q --tb=short
+开发过程中只运行与改动直接相关的测试，不启用并行：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/test_relevant_file.py -q --tb=short
 ```
 
-当前全量 unittest 由 GitHub Actions 验证。
+最终候选通常只运行一次核心全套；只有该次运行暴露问题并导致代码修改时，才允许第二次：
+
+```powershell
+.venv\Scripts\python.exe -W error::ResourceWarning -m pytest tests/ `
+  -m "not release_only" -n 4 -q --tb=short --durations=25
+```
+
+发布前另行串行运行一次发布型验证：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/ -m release_only -q --tb=short
+```
+
+相同 commit 的 fast-forward 合并复用已有验证结果，不重复全量测试。Python 3.13 是唯一的 CI 权威测试环境；
+包的 Python 安装范围保持不变，其他版本可安装不代表获得 CI 兼容性承诺。
 
 ## 关键设计决策
 

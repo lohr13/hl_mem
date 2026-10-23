@@ -256,10 +256,10 @@ def make_query_expander(
     span_recorder: Any = None,
     runtime: ProviderRuntime | None = None,
 ) -> QueryExpander | None:
-    line_overrides = settings.query_expansion_line_overrides()
     if settings.query_expansion_mode == "off" or settings.query_expansion_max == 0:
         _record_component_health("query_expander", settings.query_expansion_mode, "off")
         return None
+    line_overrides = settings.query_expansion_line_overrides()
     client_overrides: dict[str, Any] = {}
     if line_overrides is not None:
         client_overrides = {

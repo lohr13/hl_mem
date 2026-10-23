@@ -183,7 +183,11 @@ class Embedder:
         text_type: Literal["document", "query"] | None,
     ) -> list[bytes]:
         invocation = EmbeddingInvocation(tuple(texts), self.dim, self.api_mode, text_type)
-        estimate = UsageAmount(requests=1, embedding_items=len(texts))
+        estimate = UsageAmount(
+            requests=1,
+            embedding_items=len(texts),
+            unknown_units=frozenset({"input_tokens", "output_tokens"}),
+        )
         usage_status = "usage_unknown"
 
         def parse(response: ProviderResponse) -> tuple[list[bytes], UsageAmount]:
@@ -198,6 +202,9 @@ class Embedder:
                     requests=1,
                     input_tokens=parsed.input_tokens or 0,
                     embedding_items=len(texts),
+                    unknown_units=frozenset(
+                        {"output_tokens"} if parsed.input_tokens is not None else {"input_tokens", "output_tokens"}
+                    ),
                 ),
             )
 

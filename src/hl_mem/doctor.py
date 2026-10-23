@@ -8,60 +8,39 @@ import socket
 import sqlite3
 import sys
 import tempfile
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-from enum import StrEnum
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import httpx
 
-from hl_mem import components
 from hl_mem.adapters.hermes.deployment import PLUGIN_FILES, plugin_files_match, plugin_files_present
 from hl_mem.adapters.hermes.discovery import find_hermes_home
+from hl_mem.adapters.hermes.runtime_status import capture_runtime_identity, read_runtime_status
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
     DAEMON_CONTRACT_MAJOR,
     HERMES_PLUGIN_CONTRACT_MAJOR,
 )
 from hl_mem.config_loader import load_settings
+from hl_mem.diagnostics import CheckResult as CheckResult
+from hl_mem.diagnostics import CheckStatus as CheckStatus
 from hl_mem.errors import ConfigurationError
-from hl_mem.llm.types import LLMMessage, LLMRequest
-from hl_mem.observability.usage import USAGE_LEDGER_SCHEMA_VERSION, default_usage_ledger_path
+from hl_mem.observability import provider_diagnostics
 from hl_mem.settings import Settings, is_placeholder_secret
 from hl_mem.storage.backup import validate_upgrade_recovery_set
 
 MIGRATION_DIR = Path(__file__).resolve().parent / "storage" / "migrations"
 
-
-class CheckStatus(StrEnum):
-    """诊断检查状态。"""
-
-    OK = "OK"
-    WARN = "WARN"
-    FAIL = "FAIL"
-
-
-@dataclass(frozen=True)
-class CheckResult:
-    """单项诊断结果。"""
-
-    status: CheckStatus
-    name: str
-    detail: str
-    code: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.code:
-            object.__setattr__(self, "code", _CHECK_CODES.get(self.name, "diagnostic"))
-
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "code": self.code,
-            "status": self.status.value,
-            "name": self.name,
-            "detail": self.detail,
-        }
+# Preserve the existing doctor imports while Provider-specific implementation lives with observability.
+_check_embedding = provider_diagnostics.check_embedding
+_check_llm = provider_diagnostics.check_llm
+_check_provider_plugins = provider_diagnostics.check_provider_plugins
+_check_reranker = provider_diagnostics.check_reranker
+_check_usage_ledger = provider_diagnostics.check_usage_ledger
+_check_usage_price_book = provider_diagnostics.check_usage_price_book
+_validated_usage_price_book = provider_diagnostics.validated_usage_price_book
+probe_model_components = provider_diagnostics.probe_model_components
 
 
 @dataclass(frozen=True)
@@ -70,29 +49,6 @@ class DaemonProbe:
 
     payload: Mapping[str, Any] | None
     error: str | None
-
-
-_CHECK_CODES = {
-    "Python 版本": "python",
-    "配置结构": "config_schema",
-    "生产就绪": "runtime_readiness",
-    "数据库文件": "database",
-    "Migration 数量": "migrations",
-    "claims_fts rebuild": "fts_rebuild",
-    "恢复集": "recovery",
-    "密钥配置": "secrets",
-    "Embedding API": "embedding",
-    "LLM API": "llm",
-    "Reranker API": "reranker",
-    "Provider 插件": "provider_plugins",
-    "Provider 信任": "provider_trust",
-    "Provider 用量账本": "usage_ledger",
-    "服务端口": "server_port",
-    "Daemon 兼容性": "daemon_contract",
-    "Hermes 插件": "hermes_files",
-    "Hermes 插件兼容性": "hermes_contract",
-    "Context Packet wire": "context_packet",
-}
 
 
 def count_code_migrations(migration_dir: Path = MIGRATION_DIR) -> int:
@@ -186,127 +142,6 @@ def _check_secrets(settings: Settings) -> CheckResult:
     if invalid:
         return CheckResult(CheckStatus.FAIL, "密钥配置", f"缺失或为占位符：{', '.join(invalid)}")
     return CheckResult(CheckStatus.OK, "密钥配置", "已启用组件的独立密钥有效")
-
-
-def _check_provider_plugins(settings: Settings) -> list[CheckResult]:
-    try:
-        registry = components.make_provider_registry(settings)
-    except ConfigurationError as error:
-        resolution = CheckResult(CheckStatus.FAIL, "Provider 插件", str(error))
-    else:
-        capabilities = ", ".join(
-            f"{item['capability']}:{item['name']}@{item['plugin_id']}" for item in registry.health_snapshot()
-        )
-        resolution = CheckResult(CheckStatus.OK, "Provider 插件", capabilities or "未注册 Provider")
-    if settings.plugins_enabled:
-        trust = CheckResult(
-            CheckStatus.WARN,
-            "Provider 信任",
-            "启用的第三方 Provider 在宿主进程内运行，必须仅安装可信发行包：" + ", ".join(settings.plugins_enabled),
-        )
-    else:
-        trust = CheckResult(CheckStatus.OK, "Provider 信任", "仅使用内置 Provider；未加载第三方代码")
-    return [resolution, trust]
-
-
-def _check_usage_ledger(settings: Settings) -> CheckResult:
-    path = default_usage_ledger_path(settings.database_path)
-    if not path.is_file():
-        return CheckResult(CheckStatus.WARN, "Provider 用量账本", "尚未创建；首次真实 Provider 调用时初始化")
-    try:
-        with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
-            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version != USAGE_LEDGER_SCHEMA_VERSION:
-                return CheckResult(
-                    CheckStatus.FAIL,
-                    "Provider 用量账本",
-                    f"schema={version}，要求 {USAGE_LEDGER_SCHEMA_VERSION}",
-                )
-            now = datetime.now(timezone.utc).isoformat()
-            row = connection.execute(
-                "SELECT COALESCE(SUM(CASE WHEN attempts=0 THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN attempts>0 THEN 1 ELSE 0 END),0) "
-                "FROM usage_reservations WHERE state='active' AND lease_expires_at<?",
-                (now,),
-            ).fetchone()
-            expired_unsent, expired_ambiguous = int(row[0]), int(row[1])
-    except (OSError, sqlite3.Error, TypeError, ValueError) as error:
-        return CheckResult(CheckStatus.FAIL, "Provider 用量账本", f"无法只读检查：{error}")
-    status = CheckStatus.WARN if expired_unsent or expired_ambiguous else CheckStatus.OK
-    return CheckResult(
-        status,
-        "Provider 用量账本",
-        f"schema={version}；expired_unsent={expired_unsent}；expired_ambiguous={expired_ambiguous}；"
-        "doctor 未执行恢复",
-    )
-
-
-def _check_embedding(settings: Settings) -> CheckResult:
-    if settings.embedder_mode == "fake":
-        return CheckResult(CheckStatus.WARN, "Embedding API", "embedder=fake，跳过")
-    embedder = None
-    try:
-        embedder = components.make_embedder(settings)
-        embedder.embed_one("ping")
-        return CheckResult(CheckStatus.OK, "Embedding API", "请求成功")
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "Embedding API", f"最小请求失败：{error}")
-    finally:
-        close = getattr(embedder, "close", None)
-        if callable(close):
-            close()
-
-
-def _check_llm(settings: Settings) -> CheckResult:
-    if settings.extractor_mode == "fake":
-        return CheckResult(CheckStatus.WARN, "LLM API", "extractor=fake，跳过")
-    client = None
-    try:
-        client = components.make_llm_client(settings, operation="doctor")
-        client.complete(LLMRequest([LLMMessage("user", "ping")]), timeout_seconds=settings.llm_timeout)
-        return CheckResult(CheckStatus.OK, "LLM API", "请求成功")
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "LLM API", f"最小请求失败：{error}")
-    finally:
-        close = getattr(client, "close", None)
-        if callable(close):
-            close()
-
-
-def _check_reranker(settings: Settings) -> CheckResult:
-    if settings.reranker_mode == "off":
-        return CheckResult(CheckStatus.WARN, "Reranker API", "reranker=off，跳过")
-    if is_placeholder_secret(settings.reranker_api_key):
-        return CheckResult(CheckStatus.FAIL, "Reranker API", "缺少有效 API key")
-    reranker = None
-    try:
-        reranker = components.make_reranker(settings)
-        if reranker is None:
-            return CheckResult(CheckStatus.FAIL, "Reranker API", "reranker 未启用")
-        results = reranker.rerank("ping", ["ping"], top_n=1)
-    except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError) as error:
-        return CheckResult(CheckStatus.FAIL, "Reranker API", f"最小请求失败：{error}")
-    finally:
-        close = getattr(reranker, "close", None)
-        if callable(close):
-            close()
-    if not results:
-        return CheckResult(CheckStatus.FAIL, "Reranker API", "最小请求未返回结果")
-    return CheckResult(CheckStatus.OK, "Reranker API", "请求成功")
-
-
-def probe_model_components(settings: Settings) -> list[CheckResult]:
-    """Probe every model path enabled by a prospective production configuration."""
-    with tempfile.TemporaryDirectory(prefix="hl-mem-provider-probe-", ignore_cleanup_errors=True) as temporary:
-        probe_settings = replace(
-            settings,
-            database_path=str(Path(temporary) / "probe.db"),
-            llm_max_tokens=1,
-        )
-        results = [_check_llm(probe_settings), _check_embedding(probe_settings)]
-        if probe_settings.reranker_mode in {"on", "real"}:
-            results.append(_check_reranker(probe_settings))
-        return results
 
 
 def _check_port() -> CheckResult:
@@ -468,6 +303,64 @@ def _check_hermes(settings: Settings) -> CheckResult:
     return CheckResult(CheckStatus.FAIL, "Hermes 插件", f"应安装到 {expected}")
 
 
+def _check_hermes_runtime(settings: Settings) -> CheckResult:
+    """Compare bounded gateway registration evidence with this CLI runtime."""
+    name = "Hermes loaded runtime"
+    code = "hermes_runtime"
+    try:
+        hermes_home = find_hermes_home(settings.hermes_home)
+    except RuntimeError:
+        return CheckResult(CheckStatus.WARN, name, "Hermes home unavailable; restart status not observed", code=code)
+    if not hermes_home.exists():
+        return CheckResult(CheckStatus.WARN, name, "Hermes home unavailable; restart status not observed", code=code)
+    try:
+        registration = read_runtime_status(hermes_home)
+    except (OSError, ValueError):
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            "Runtime registration evidence is malformed; restart Hermes after reinstalling the plugin",
+            code=code,
+        )
+    if registration is None:
+        return CheckResult(
+            CheckStatus.WARN,
+            name,
+            "No loaded-runtime evidence yet; restart Hermes to record the active HL-Mem package",
+            code=code,
+        )
+    if registration.status == "registration_failed":
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            "Last registration failed "
+            f"({registration.exception_type}, count={registration.failure_count}); restart Hermes after repair",
+            code=code,
+        )
+    current = capture_runtime_identity()
+    mismatches: list[str] = []
+    if registration.package_version != current.package_version:
+        mismatches.append("version")
+    if Path(registration.package_path).resolve() != Path(current.package_path).resolve():
+        mismatches.append("package path")
+    if registration.git_sha != current.git_sha:
+        mismatches.append("Git revision")
+    if mismatches:
+        return CheckResult(
+            CheckStatus.FAIL,
+            name,
+            f"Loaded runtime differs in {', '.join(mismatches)}; restart Hermes to load the current package",
+            code=code,
+        )
+    revision = registration.git_sha[:12] if registration.git_sha is not None else "wheel"
+    return CheckResult(
+        CheckStatus.OK,
+        name,
+        f"loaded version={registration.package_version}, revision={revision}, registration succeeded",
+        code=code,
+    )
+
+
 def run_doctor(
     database_path: Path | None = None,
     config_path: Path | None = None,
@@ -500,7 +393,26 @@ def run_doctor(
         else:
             recovery = CheckResult(CheckStatus.OK, "恢复集", "备份、manifest 与当前数据库身份匹配")
 
-    daemon_probe = _probe_daemon(settings)
+    price_book_check, price_book = _validated_usage_price_book(settings)
+    if price_book_check is not None and price_book_check.status is CheckStatus.FAIL:
+        daemon_probe = DaemonProbe(None, "skipped because usage price book validation failed")
+        skipped_detail = "model probe skipped because usage pricing is unavailable"
+        model_checks = [
+            CheckResult(CheckStatus.FAIL, "LLM API", skipped_detail),
+            CheckResult(CheckStatus.FAIL, "Embedding API", skipped_detail),
+        ]
+        if settings.reranker_mode in {"on", "real"}:
+            model_checks.append(CheckResult(CheckStatus.FAIL, "Reranker API", skipped_detail))
+        port_check = CheckResult(
+            CheckStatus.WARN,
+            "服务端口",
+            "skipped because usage price book validation failed",
+            code="server_port",
+        )
+    else:
+        daemon_probe = _probe_daemon(settings)
+        model_checks = probe_model_components(settings, estimator=price_book)
+        port_check = _check_port()
     version = tuple(sys.version_info[:3])
     return [
         CheckResult(
@@ -517,10 +429,12 @@ def run_doctor(
         _check_secrets(settings),
         *_check_provider_plugins(settings),
         _check_usage_ledger(settings),
-        *probe_model_components(settings),
-        _check_port(),
+        *((price_book_check,) if price_book_check is not None else ()),
+        *model_checks,
+        port_check,
         _check_daemon_compatibility(daemon_probe),
         _check_hermes(settings),
+        _check_hermes_runtime(settings),
         _check_plugin_compatibility(settings),
         _check_wire_compatibility(daemon_probe),
     ]

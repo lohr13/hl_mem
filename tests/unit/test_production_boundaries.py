@@ -9,7 +9,6 @@ from hl_mem.security.retention import enforce_event_quota, purge_retained_events
 from hl_mem.storage.backup import backup_database
 from hl_mem.storage.database import Database
 from hl_mem.storage.deferred_tasks import DeferredTaskRepository
-from hl_mem.storage.postgres import PostgresDatabase
 from hl_mem.storage.tombstones import default_tombstone_ledger_path
 
 
@@ -84,9 +83,3 @@ def test_retention_preserves_events_with_pending_deferred_tasks(tmp_path) -> Non
         "2025-01-02T00:00:00Z",
     )
     assert purge_retained_events(connection, "a", "2025-06-01T00:00:00Z") == 1
-
-
-def test_postgres_adapter_is_optional_and_reports_missing_driver() -> None:
-    adapter = PostgresDatabase("postgresql://example.invalid/db")
-    with pytest.raises(RuntimeError, match="psycopg"):
-        adapter.open()

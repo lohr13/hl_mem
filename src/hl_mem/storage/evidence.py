@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from hl_mem.lifecycle import DerivationStatus, assert_valid_derivation_transition
+from hl_mem.security.source_hint import safe_source_hint
 from hl_mem.storage._shared import insert_row, row_to_dict
 
 
@@ -42,6 +43,38 @@ class EvidenceRepository:
             ).fetchall()
             for row in rows:
                 result[row["derived_id"]].append({"type": row["evidence_type"], "id": row["evidence_id"]})
+        return result
+
+    def batch_get_claim_event_provenance(self, claim_ids: list[str]) -> dict[str, dict[str, dict[str, str]]]:
+        """Load only bounded Event provenance for a batch of Claim evidence links."""
+        unique_ids = list(dict.fromkeys(claim_ids))
+        result: dict[str, dict[str, dict[str, str]]] = {claim_id: {} for claim_id in unique_ids}
+        for start in range(0, len(unique_ids), 500):
+            chunk = unique_ids[start : start + 500]
+            if not chunk:
+                continue
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                "SELECT link.derived_id,link.evidence_id,event.origin_class,event.session_kind,"
+                "event.occurred_at,event.source_uri FROM evidence_links AS link JOIN events AS event "
+                "ON event.id=link.evidence_id WHERE link.derived_type='claim' AND link.evidence_type='event' "
+                f"AND link.derived_id IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                origin = str(row["origin_class"] or "unknown")
+                session = str(row["session_kind"] or "unknown")
+                if origin in {"direct_user", "agent", "unknown"} and session in {"interactive", "unknown"}:
+                    continue
+                provenance = {
+                    "origin_class": origin,
+                    "session_kind": session,
+                    "observed_at": str(row["occurred_at"]),
+                }
+                hint = safe_source_hint(row["source_uri"])
+                if hint is not None:
+                    provenance["source_hint"] = hint
+                result[str(row["derived_id"])][str(row["evidence_id"])] = provenance
         return result
 
     def batch_get_echo_signals(

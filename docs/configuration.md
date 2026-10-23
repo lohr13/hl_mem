@@ -1,10 +1,11 @@
 # HL-Mem 配置参考
 
-HL-Mem 1.0.0rc1 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
+HL-Mem 1.1.6 使用带 `schema_version = 1` 的 TOML 保存非敏感配置，并用 `.env` 或同名进程环境变量保存五个密钥。
 `Settings` 是唯一 schema；下表由 `Settings` 字段 metadata 自动生成。未写入 TOML 的字段使用代码默认值。
 模型型号不在活文档中固化：LLM、Embedding、Reranker 和图片描述器的 API 密钥通过 `.env` 配置，provider/model 等非敏感选项通过 TOML 配置。
 
-v1.0.0rc1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观测，不改变 supersede、召回或注入行为。
+v1.1.6 的 assertion/source/session 治理共用 `[provenance].mode`；存量 `unknown` 保持旧行为，不改变
+supersede、召回或注入。
 
 ## 后台自动化默认值
 
@@ -44,8 +45,9 @@ v1.0.0rc1 的受限 assertion 门控没有配置键；存量 `unknown` 只可观
   诱饵误报 0、误转 permanent 0（合成语料）；未过的门禁仅为判分模型双序一致性，属评测装备限制而非信号质量缺陷。
   该改动只影响新提取 claim 的重要性打分，非破坏性、可随时改回 `"observe"` 回滚。如果你的 agent 使用场景中
   纠错/防错类记忆的价值密度高（运维、交易纪律、协作规范等），建议开启。
-- `recall.entity_constraint_mode="observe"`：E4 行为门禁通过，但冻结查询 100% 为 snapshot-derived synthetic，证据
-  等级不足；取得满足预注册真实查询占比的语料前不启用 hard filter。
+- `recall.entity_constraint_mode="enforce"`：仅当查询中的全部 active mention 唯一解析到同一 typed canonical entity，
+  且 Claim link coverage 完整时，才在 FTS/Dense 候选截断前限定实体范围；历史 alias、歧义、多实体、链接不完整或
+  存储异常均回退宽召回。可显式设为 `observe` 做 shadow 对照，或设为 `off` 完全关闭解析。
 - `hermes.manual_conflict_notice=true`：只提示 residual `manual_required_count`，同一会话首次或计数变化时显示；
   可设为 `false` 立即关闭。
 
@@ -237,20 +239,29 @@ Event 的 `metadata_json` 属于归档与幂等冲突判定的一部分；turn l
 | `extraction.batch_max_wait_seconds` | 数值 | `120.0` | >= 0 | `extraction_batch_max_wait_seconds` |
 | `extraction.chunk_overlap_turns` | 整数 | `2` | >= 0 | `extraction_chunk_overlap_turns` |
 | `extraction.chunk_target_chars` | 整数 | `12000` | >= 1 | `extraction_chunk_target_chars` |
-| `extraction.delta_repair_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_delta_repair_enabled` |
+| `extraction.delta_repair_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_delta_repair_enabled` |
 | `extraction.lesson_signal_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `lesson_signal_mode` |
 | `extraction.max_split_depth` | 整数 | `3` | >= 0 | `extraction_max_split_depth` |
+| `extraction.memory_disposition_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `memory_disposition_mode` |
 | `extraction.mode` | 字符串 | `"llm"` | 生产为 `real` 或 `llm`；`fake` 仅供测试 | `extractor_mode` |
-| `extraction.soft_split_enabled` | 布尔值 | `false` | `true`、`false` | `extraction_soft_split_enabled` |
+| `extraction.soft_split_enabled` | 布尔值 | `false` | 已弃用 no-op；仍接受 `true`、`false` | `extraction_soft_split_enabled` |
 | `extraction.verification_mode` | 字符串 | `"off"` | `off`、`audit`、`enforce` | `verification_mode` |
+
+`extraction.memory_disposition_mode = "enforce"` 在 Event 明确携带
+`metadata.memory_disposition = "exclude"` 时，于图片描述和 Claim 提取前保留 Event 并停止后续处理；
+`"observe"` 只记录 `excluded_by_producer_disposition` 审计后继续，`"off"` 忽略该标记。缺失、非对象
+metadata 或未知 disposition 值均 fail-open，不根据正文或 origin 推断。Hermes cron assistant 输出会显式打标，
+cron prompt/user Event 与交互会话保持原行为。
 
 Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待
 `batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入
 user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并；Claim 仍分别链接实际来源 Event。
 默认值偏向降低提取调用成本：增大批量上限或等待时间有利于合并更多相邻 Event、摊薄 LLM 调用成本，
 但会增加低流量 session 的提取延迟；需要低延迟时可调小这两个值。
-`extraction.delta_repair_enabled` 只有同时启用 `extraction.soft_split_enabled`，且首次二分后的子块仍命中
-30 条 schema 上限时才懒触发一次；单独启用 delta repair 不增加提取调用。两项开关默认均为 `false`。
+从 v1.1.3 起，`extraction.soft_split_enabled` 与 `extraction.delta_repair_enabled` 仅作为兼容配置继续接受，
+已弃用且不再触发额外模型调用。普通提取以不超过 12 条上下文完整 Claim 为目标；合法响应超过每 chunk
+16 条时，程序按 notability、confidence 和原始顺序确定性保留前 16 条并记录 overflow 审计。只有 provider
+实际输出截断（例如 `finish_reason=length`）仍会按 `extraction.max_split_depth` 对输入二分恢复。
 
 ### `[hermes]`
 
@@ -305,7 +316,7 @@ user/assistant 一对 Event，通常在该上限内与后续相邻 turn 合并�
 | `llm.schema_retries` | 整数 | `2` | >= 0 | `llm_schema_retries` |
 | `llm.structured_mode` | 字符串 | `"json_object"` | `auto`、`json_object`、`json_schema` | `llm_structured_mode` |
 | `llm.thinking_control` | 字符串 | `"auto"` | `auto`、`chat_template_kwargs` | `llm_thinking_control` |
-| `llm.timeout` | 数值 | `90.0` | > 0 | `llm_timeout` |
+| `llm.timeout` | 数值 | `240.0` | > 0 | `llm_timeout` |
 
 `llm.thinking_control = "auto"` 保持 provider 现有请求格式：DashScope 发送顶层 `enable_thinking`，
 Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 `llm.provider = "openai_compatible"` 且
@@ -338,6 +349,36 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 `enforce` 只接受已存在 typed instrument 的 exchange-qualified code 或唯一显式 alias；解析器不能创建 canonical ID。
 缺 target 时价格序列继续返回 `uncertain:price_target_missing`。
 
+### `[provenance]`
+
+| TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
+|---|---|---|---|---|
+| `provenance.mode` | 字符串 | `"enforce"` | `observe`、`enforce` | `provenance_mode` |
+
+`enforce` applies deterministic source/session admission. `observe` records the
+same decisions without changing extraction or Claim semantics. Neither mode
+adds model calls or attempts fact verification.
+
+Event 只新增 `origin_class` 和 `session_kind` 两个来源字段。旧客户端未提供时，两者均保存为 `unknown` 并保持
+1.0 行为。当前受控值如下：
+
+| 场景 | `origin_class` | `session_kind` | `enforce` 行为 |
+|---|---|---|---|
+| 交互用户原话 | `direct_user` | `interactive` | 正常提取与写入 |
+| Agent 自身输出 | `agent` | `interactive` | 正常提取与写入 |
+| 外部 Tool 原文或转述 | `external` / `external_derived` | `interactive` | 可保存；Claim 降为 low authority，并保留观察时间和证据 |
+| cron 自动会话 | `system` | `cron` | 可保存为低权威时效观察，不自动成为永久规则 |
+| heartbeat / subagent | `system` | 对应 session | Event 保留；在模型调用前阻止自动 Claim 提取 |
+| 旧宿主或未知来源 | `unknown` | `unknown` | 完全保持旧行为 |
+
+Hermes 只从结构化 `platform` / `agent_context` 映射 interactive、cron、heartbeat 或 subagent；没有该元数据时为
+`unknown`，不会根据消息正文猜测 session 类型。
+
+用户显式要求记忆外部信息只保护保留意图，不会把来源升级为已验证事实。系统不使用 LLM 猜测来源，也不执行
+事实核查或历史回填。只读命令 `hl-mem explain claim <claim-id> [--json]` 显示当前 Claim 状态、直接 Evidence、
+安全来源提示和当前治理解释；它不输出 Claim 正文、工具结果、URL 凭据/路径/查询或配置密钥，也不重建已经过期的
+历史准入审计。
+
 ### `[recall]`
 
 | TOML 键 | 类型 | 默认值 | 允许值 | Settings 字段 |
@@ -352,7 +393,7 @@ Zhipu 与通用 OpenAI-compatible provider 不发送思考控制字段。仅当 
 | `recall.echo_pending_similarity_threshold` | 数值 | `0.95` | 0.0 - 1.0 | `echo_pending_similarity_threshold` |
 | `recall.echo_session_window_seconds` | 整数 | `1800` | 60 - 14400 | `echo_session_window_seconds` |
 | `recall.echo_suppression_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `echo_suppression_mode` |
-| `recall.entity_constraint_mode` | 字符串 | `"observe"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
+| `recall.entity_constraint_mode` | 字符串 | `"enforce"` | `off`、`observe`、`enforce` | `entity_constraint_mode` |
 | `recall.expansion_circuit_failure_threshold` | 整数 | `5` | >= 1 | `expansion_circuit_failure_threshold` |
 | `recall.expansion_circuit_open_seconds` | 数值 | `60.0` | > 0 | `expansion_circuit_open_seconds` |
 | `recall.feedback_min_samples` | 整数 | `3` | >= 1 | `feedback_min_samples` |
@@ -491,7 +532,13 @@ Pending dedup pairs below the current `dedup.threshold` can be reported read-onl
 |---|---|---|---|---|
 | `usage.daily_cost_limit_microunits` | 整数 | `0` | 任意整数 | `usage_daily_cost_limit_microunits` |
 | `usage.daily_request_limit` | 整数 | `0` | 任意整数 | `usage_daily_request_limit` |
+| `usage.price_book_path` | 字符串 | 未设置 | 非空本地路径；可省略 | `usage_price_book_path` |
 | `usage.reservation_lease_seconds` | 整数 | `300` | 任意整数 | `usage_reservation_lease_seconds` |
+
+`usage.price_book_path` 是可选的宿主本地 JSON 价格表，schema 见
+[`usage-pricing.schema.json`](usage-pricing.schema.json)。相对路径以 `hl_mem.toml` 所在目录解析；
+价格表只支持 CNY 整数 microunits、精确 capability/model/provider 匹配，不支持远程 include、正则或表达式。
+未配置或没有匹配规则时成本保持 unknown；启用有限 `daily_cost_limit_microunits` 时 unknown reserve 会 fail-closed。
 
 ### `[worker]`
 

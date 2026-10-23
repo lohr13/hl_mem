@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .schema import MAX_CLAIMS_PER_CHUNK, ORDINARY_CLAIM_TARGET
+
 LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未来有价值的原子事实。
 
 只输出严格 JSON，不要输出解释、Markdown 或额外字段：
@@ -40,19 +42,24 @@ LEGACY_SYSTEM_PROMPT = """你是记忆事实提取器。从对话中提取对未
   ✅ 「我上周参加 Emily 的婚礼。」→ subject=用户，value=用户上周参加 Emily 的婚礼，kind=fact，notability=low
   ✅ 「我需要把旧靴子退回 Zara。」→ subject=用户，value=用户需要把旧靴子退回 Zara，kind=plan，notability=low
   参加、归还、拥有、任职、拜访等明确动作/关系即使是一次性事件也不得省略。
+- 个人语义：显式归因给某人的观点、信念、理解、感受、行为原因和实践原则若对未来问答有用，必须保留其内容；不得只记该人物讨论过某主题。
+- 说话人绑定：形如「姓名：发言」时，第一人称代词和个人陈述属于冒号前姓名，不得改成泛化的“用户”；提问、未采纳引语和助手通识不得当作该人物的观点。
+- 助手边界：助手关于自身身份、偏好、感受、计划或对话承诺的陈述不进入长期记忆，除非内容本身是可复用交付物、配置或已采纳项目决策。
 - 实体保真（最高优先级）：具体名字是不可丢失信息。原文给出人名、地名、组织名、产品名或项目名时，涉及该实体的每条 claim 必须在 subject 或 value 中逐字保留该专名。
   禁止省略、匿名化或用代词、职位、关系角色、类别替换专名；例如禁止把刘梅泛化成“陌生人”。泛化或摘要只能作为附加 claim，不能替代包含具体名字的 claim。
   原文中的名字或别名也不得被上下文中的另一名称覆盖；若同一实体同时出现昵称和正式名，保留事实所在原文的称呼，必要时写成“小飞（熊飞）”。
 - 跨行或结构化记录中的字段属于同一事实时必须联合理解，不能只提取 Description/描述而丢掉 Name/具体人物/Supporting Characters 字段。
-  ✅ 「具体人物：刘晓\n描述：徐佳的高中同学，年龄28岁，是一名音乐家。\n与徐佳的关系：同学」→ 分别提取：
-    1. subject=刘晓，value=刘晓是徐佳的高中同学
+  ✅ 「具体人物：刘晓\n描述：王敏的高中同学，年龄28岁，是一名音乐家。\n与王敏的关系：同学」→ 分别提取：
+    1. subject=刘晓，value=刘晓是王敏的高中同学
     2. subject=刘晓，value=刘晓年龄28岁
     3. subject=刘晓，value=刘晓是一名音乐家
   ✅ 「张强是小飞的同学，年龄31岁。」→ subject=张强，value=张强是小飞的同学；另提 subject=张强，value=张强年龄31岁。不得省略“小飞”或整条同学关系。
 - 枚举与总数（关键）：枚举中的每个可独立回答项及其数量、单位必须分别保留，不得用模糊汇总替代。
   ✅ 「鱼缸里有五条霓虹灯鱼、三条孔雀鱼。」→ 分别提取五条霓虹灯鱼和三条孔雀鱼。
+  同一主题下的动物、植物、威胁、特征或步骤只要能分别回答，就必须逐项提取；共同主题不是合并理由。
+  ✅ 「保护区记录了动物A、植物B、威胁C。」→ 动物、植物、威胁分别输出三条 claim。
   原文明说总数时提取该总数；只说组成项时不得计算原文未明确陈述的总数。
-- 数值属性（人数、天数、金额等）极易在合并提取中丢失，务必单独成条。
+- 数值属性（人数、天数、金额等）必须保留在对应记忆中，但不得只为数字另建一条重复 claim。
 - ✅ episodic 正例：「我装 IKEA 书架用了 4 小时。」→ subject=用户，value=用户组装 IKEA 书架用了 4 小时，kind=fact，notability=low
 - value 必须脱离上下文仍可理解，包含必要的主体、关系、对象和单位。
 - subject 用标准名称（hl_mem、Hermes、用户、Codex 等），不用代词。
@@ -65,8 +72,8 @@ kind 分类：
 - architecture：已执行的架构决策、系统结构、组件关系。
 - identity：用户名、硬件、角色等身份信息。
 - config：端口、路径、模型名、API 地址等技术配置。
-- fact：其他客观事实，包括一次性事件及其可回答细节。
-- plan：已确认的计划和截止日期。
+- fact：已完成的动作、当前状态、已生效决定及其他客观事实；后文已确认完成时，不得因前文出现“决定将”“将”或“计划”仍分类为 plan。
+- plan：明确仍待执行的行动，尤其是有未来日期、截止时间、周期、时间窗或条件的安排。
 - choice：已生效的数据库、模型、工具或 provider 技术选型。
 
 notability 分级：
@@ -99,12 +106,17 @@ assistant durable output：
 - 显式支持表格行、编号列表项、脚本设定、联系人信息、工具到算法的映射等可回答 span。
 - 只提取能独立回答后续问题的最小原子内容；禁止记忆整段 assistant 回答或普通解释性填充。
 
-- 覆盖优先：先逐项扫描全文，再输出所有有证据、可独立回答的原子事实；高密度长文通常应产出 12–30 条，不要在已有少量 claim 时提前停止。
-- 数量由原文决定：短文可以只有 0–少量；禁止为接近 12 或 30 而重复、拆碎同一事实、概括填充或虚构。
+- 原子性：每条 claim 只表达一个有证据、可独立回答的原子事实；复合句、枚举或结构化记录包含多个事实时逐项拆分，不得合并遗漏。
+- 完整性：长期偏好、已采用决策、重要配置、明确计划和状态迁移只要有证据就必须提取；不同主题或可独立变化的槽位不得合并或遗漏；这些类别任一存在时返回空 claims 属于错误。
+- 精确性：不得改写、互换或推算日期、时间、频率、持续期、数量及审批条件；状态迁移应保留旧值、新值、生效时间和原因；value 中的每个断言都必须由 evidence_quote 直接支持。
+- 数量由原文决定：可以输出 0 条，不需要凑数；通常不超过 {ordinary_claim_target} 条，最多 {max_claims_per_chunk} 条；必须先按 notability 的 high、medium、low 顺序，再按 confidence 从高到低排列。
+- 保真：在对应原子事实中保留具体姓名、日期、数字、单位和约束。
 限制：
-- max 30 claims per chunk。
+- 最多 {max_claims_per_chunk} 条。
 - claims 中每项必须且只能包含上述 7 个字段。
-- kind、notability 和 confidence 必须满足上述枚举与范围。"""
+- kind、notability 和 confidence 必须满足上述枚举与范围。""".replace(
+    "{ordinary_claim_target}", str(ORDINARY_CLAIM_TARGET)
+).replace("{max_claims_per_chunk}", str(MAX_CLAIMS_PER_CHUNK))
 
 LEGACY_ENGLISH_SYSTEM_PROMPT = """You extract atomic memory claims from conversations for later use.
 
@@ -132,7 +144,7 @@ Source boundaries:
 
 Atomicity and source-language rules:
 - Each claim must state exactly one fact. Split a sentence whenever it contains multiple facts.
-- Compound-clause splitting is critical: if one clause says the user will do X and another gives an attribute of X,
+- Compound-clause splitting is critical: if one clause says "the user will do X" and another gives an attribute of X,
   emit separate claims.
   Example: "I will attend the Lead Reporters Development Camp, which has 600 participants" becomes two claims:
   1. subject=user, value=The user will attend the Lead Reporters Development Camp, kind=plan
@@ -144,6 +156,9 @@ Atomicity and source-language rules:
   preserve the subject, action, object, and proper names.
   Examples: "I attended Emily's wedding last weekend" and "I need to return the old boots to Zara."
   Do not omit one-off events involving attendance, returns, ownership, employment, or visits.
+- Personal meaning: preserve the content of an explicitly attributed viewpoint, belief, interpretation, feeling, behavioral reason, or practice principle when it can help a future answer; do not retain only that the person discussed a topic.
+- Speaker binding: in `Name: utterance`, first-person references and personal assertions belong to the name before the colon, never a generic `user`; a question, unadopted quotation, or generic assistant explanation is not that person's viewpoint.
+- Assistant boundary: skip assistant self-statements about identity, preferences, feelings, plans, or conversational promises unless the content itself is a reusable deliverable, configuration, or adopted project decision.
 - Entity fidelity has the highest priority. A specific name is lossless source data. When the source names a person,
   place, organization, product, or project, every claim involving it must preserve that exact name in subject or value.
   Never omit, anonymize, or replace Maya with a generic role such as stranger. A generalization or summary may only be
@@ -158,9 +173,11 @@ Atomicity and source-language rules:
   3. subject=Maya, value=Maya is a musician
 - Each independently answerable item in an enumeration must be preserved separately with its exact quantity and unit;
   never replace the items with a vague summary. Extract an explicitly stated total when present.
+  For animals, plants, threats, features, or steps under the same topic, emit each answerable item as its own claim;
+  a shared topic is not a reason to merge them. For "animal A, plant B, threat C", emit three separate claims for the animal, plant, and threat.
   Do not calculate a total that the source does not explicitly state when it gives only the component items.
-- Pay special attention to numbers, durations, dates, places, prices, counts, and named entities; each distinct
-  attribute gets its own claim.
+- Preserve relevant numbers, durations, dates, places, prices, counts, and named entities inside the corresponding
+  memory, but do not create a duplicate claim merely to isolate one detail.
 - Episodic example: "I spent 4 hours assembling an IKEA bookcase" becomes a low-notability fact whose value keeps
   IKEA, 4 hours, and the assembly event.
 - value must stand on its own and include the subject, relation, object, number, and unit needed to understand it.
@@ -177,8 +194,8 @@ Kinds:
 - architecture: implemented architecture decisions, system structure, or component relationships.
 - identity: names, roles, hardware ownership, and other identity information.
 - config: ports, paths, model names, API endpoints, and other technical configuration.
-- fact: other objective facts, including one-off events and their answerable details.
-- plan: confirmed plans and deadlines.
+- fact: a completed action, current state, effective decision, or other objective fact; when later context confirms completion, earlier words such as `decided to`, `will`, or `plan to` must not keep it classified as a plan.
+- plan: an explicitly pending action, especially one with a future date, deadline, recurrence, time window, or condition.
 - choice: an adopted database, model, tool, or provider choice.
 
 Notability:
@@ -210,14 +227,19 @@ Assistant durable output:
 - Extract reusable assistant durable output even when it is not a fact originally stated by the user.
 - Eligible answerable spans include table rows, numbered list items, script settings, contact details, and
   tool-to-algorithm mappings.
-- Extract only the smallest self-contained span that can answer a later question. Do not memorize the whole assistant answer.
+- Extract only the smallest self-contained atomic span that can answer a later question. Do not memorize the whole assistant answer.
 
-- Coverage first: scan the full source and emit every supported independently answerable atomic fact; a dense long source will often yield 12–30 claims, so do not stop after only a few.
-- Let the source determine the count: a short source may yield zero or only a few; never repeat, fragment, pad, generalize, or invent facts to approach 12 or 30.
+- Atomicity: each claim states one supported, independently answerable atomic fact; split compound sentences, enumerations, and structured records item by item without merging or omitting facts.
+- Completeness: always extract evidenced lasting preferences, adopted decisions, important configuration, confirmed plans, and state transitions; never merge or omit distinct topics or independently changing slots; returning empty claims is an error when any of these categories is present.
+- Precision: never rewrite, swap, or calculate dates, times, frequencies, durations, quantities, or approval conditions; a state transition must retain its old value, new value, effective time, and reason; every assertion in value must be directly supported by evidence_quote.
+- Let the source determine the count: zero is valid and no padding is needed; normally return at most {ordinary_claim_target} claims, never more than {max_claims_per_chunk}; order strictly by notability high, medium, low, then by confidence descending.
+- Fidelity: keep relevant names, dates, numbers, units, and constraints inside the corresponding atomic fact.
 Limits:
-- Maximum 30 claims per chunk.
+- Maximum {max_claims_per_chunk} claims per chunk.
 - Every claim must contain exactly the seven fields shown above.
-- kind, notability, and confidence must use the specified values and ranges."""
+- kind, notability, and confidence must use the specified values and ranges.""".replace(
+    "{ordinary_claim_target}", str(ORDINARY_CLAIM_TARGET)
+).replace("{max_claims_per_chunk}", str(MAX_CLAIMS_PER_CHUNK))
 
 
 def _with_source_bounded_relation_fields(prompt: str, *, language: Literal["zh", "en"]) -> str:

@@ -51,14 +51,16 @@ api_mode = "compatible"
     manifest = backup_database(database_path, backup)
     ledger = default_tombstone_ledger_path(database_path)
 
-    monkeypatch.setattr(
-        doctor_module,
-        "probe_model_components",
-        lambda _settings: [
+    probe_estimators: list[object | None] = []
+
+    def probe_model_components(_settings: object, *, estimator: object | None = None) -> list[CheckResult]:
+        probe_estimators.append(estimator)
+        return [
             CheckResult(CheckStatus.OK, "LLM API", "verified"),
             CheckResult(CheckStatus.OK, "Embedding API", "verified"),
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(doctor_module, "probe_model_components", probe_model_components)
     monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
     monkeypatch.setattr(
         doctor_module,
@@ -80,6 +82,7 @@ api_mode = "compatible"
     )
 
     assert next(item for item in results if item.code == "recovery").status is CheckStatus.OK
+    assert probe_estimators == [None]
     assert {path.name for path in tmp_path.iterdir()} == entries_before
     assert {path: _sha256(path) for path in protected} == hashes_before
     assert {

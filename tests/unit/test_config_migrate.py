@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,17 @@ def test_v1_plan_is_noop_and_apply_refuses_rewrite(tmp_path: Path) -> None:
     assert plan.no_op is True
     with pytest.raises(ValueError, match="already uses schema_version 1"):
         apply_config_migration(plan, environ=SECRETS)
+
+
+def test_v1_plan_preserves_explicit_entity_constraint_mode(tmp_path: Path) -> None:
+    source = tmp_path / "hl_mem.toml"
+    document = 'schema_version = 1\n[recall]\nentity_constraint_mode = "observe"\n'
+    source.write_text(document, encoding="utf-8")
+
+    plan = plan_config_migration(source, environ={})
+
+    assert plan.no_op is True
+    assert tomllib.loads(plan.document)["recall"]["entity_constraint_mode"] == "observe"
 
 
 def test_apply_preserves_exact_source_and_refuses_stale_plan(tmp_path: Path) -> None:

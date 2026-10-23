@@ -1,7 +1,7 @@
 # HL-Mem Architecture
 
-- Document baseline: v1.0.0rc1
-- Updated: 2026-08-31
+- Document baseline: v1.1.7
+- Updated: 2026-09-03
 - Deployment baseline: local-first, SQLite-first
 
 This document describes the shipped architecture. Feature maturity and default modes are tracked in the
@@ -69,6 +69,7 @@ src/hl_mem/
 │   ├── ingest.py             # IngestService and atomic Claim write path
 │   ├── plan_fulfillment.py   # Result-to-plan reconciliation and governance CAS
 │   ├── recall.py             # RecallService orchestration and compatibility patch points
+│   ├── recall_side_effects.py # Recall access/exposure transactions, retries, and audits
 │   ├── recall_delivery.py    # Pure context candidate, packing, and bundle transformations
 │   ├── recall_enrichment.py  # Repository-backed evidence and relation result enrichment
 │   ├── forget.py             # Explicit-forget adapter over DeletionService
@@ -109,10 +110,11 @@ src/hl_mem/
 ├── recall/
 │   ├── observation.py        # Derived-memory assembly
 │   ├── entity_query.py       # Query mention resolution and observe/enforce constraints
+│   ├── query_planning.py     # Query expansion, embeddings, and entity-plan preparation
 │   ├── ranking.py            # Multi-factor ranking
 │   ├── relation_expansion.py # One-hop relation expansion
 │   ├── reranker.py           # Optional reranking (model configured via TOML)
-│   ├── staged_pipeline.py    # FTS + dense + optional tag channel and RRF
+│   ├── staged_pipeline.py    # FTS + dense, RRF, entity constraint, and tag soft boost
 │   └── trace.py              # SearchTrace diagnostics and metrics
 ├── security/                 # Image input boundary, retention and content policy
 ├── storage/
@@ -131,7 +133,7 @@ src/hl_mem/
 │   ├── usefulness.py         # Feedback usefulness aggregation
 │   ├── candidate_materializer.py # Shared temporal/namespace candidate hydration
 │   ├── sqlite_vec.py         # Optional sqlite-vec projection and search backend
-│   └── migrations/           # 59 immutable SQL migrations (001-059)
+│   └── migrations/           # 60 immutable SQL migrations (001-060)
 ├── workers/
 │   ├── worker.py             # Job leasing, progress, heartbeat, maintenance orchestration
 │   ├── automation.py         # Typed enablement policy for semantic and deferred tasks
@@ -191,6 +193,13 @@ Context Packet v1 is a delivery projection rather than another stored memory typ
 token-budgeted items for one recall, carries evidence and answerability, and assigns a fresh `feedback_id` to each
 delivered item so later feedback can be attributed to that exposure.
 
+Event provenance is deliberately small: `origin_class` records the declared information origin and `session_kind`
+records the host session category. Hermes derives these labels from structured host/tool metadata; extraction never asks
+an LLM to guess them. Claim Evidence links remain the single lineage mechanism. At write time, the most conservative
+linked Event controls source authority and automated-session admission; at recall time, one batch query projects only
+bounded origin/session/time/host hints into `evidence[]`. External information remains storable but cannot be washed into
+trusted user knowledge by an Agent paraphrase. Direct-user and legacy-unknown packets remain unchanged.
+
 Answerability is shared across the application API, Context Packet, benchmark readers, and evaluation runners:
 `no_evidence` is hard abstention with no retrieval candidate, while `low_confidence` is soft abstention with candidates
 whose confidence signal remains below the supported threshold. Readers short-circuit only `no_evidence`; observe-mode
@@ -239,11 +248,12 @@ persisted as separate Event evidence links; speaker remains an Event property in
 subject. Each decision emits an audit reason code. Claim FTS and dense embeddings consume the persisted `index_text`;
 changing `index.text_mode` therefore supports controlled representation A/B without changing the rest of recall.
 
-The localized Chinese and English prompts share atomicity rules for compound facts, explicit actions/relationships,
-named-entity fidelity, one-off events, and enumerations. Prompt and extractor identities are recorded by the code and
-evaluation manifests instead of being duplicated in this document. A raw structured response containing exactly the 20
-allowed Claims emits a `claim_limit_reached` audit warning because the model may have silently omitted additional facts;
-the schema limit itself remains unchanged.
+The localized Chinese and English prompts prefer context-rich memories whose topic or lifecycle can be independently
+updated, contradicted, or forgotten, while preserving explicit actions, relationships, named entities, dates, and
+quantities. Ordinary output targets at most 12 Claims. A valid response above the hard 16-Claim per-chunk budget is
+deterministically ranked by notability, confidence, and original position, then reduced without another model call; the
+reduction emits `extract/claim_budget/overflow_truncated`. Claim count never triggers input splitting or schema retry.
+Provider output truncation remains distinct and may still bisect input up to `extraction.max_split_depth`.
 
 The released extractor prompt remains the pre-v0.31 prompt because the lesson-notability experiment was sealed. A
 deterministic post-processor can emit a grounded `lesson_signal`, but its default `observe` mode cannot promote scope or
@@ -254,6 +264,11 @@ The bounded window has only two controls: count and maximum wait. An idle timer 
 `sync_turn` already writes the user/assistant pair atomically; adding another debounce state would increase starvation and
 recovery complexity without improving evidence semantics. Explicit memories, non-message Events, and Events without a
 session take the immediate single-Event path. LongMemEval queues the same Events and drains this same Worker path.
+
+An Event producer can explicitly set `metadata.memory_disposition = "exclude"`. The default `enforce` mode retains the
+Event but stops image description and Claim extraction; `observe` audits the same declaration without changing extraction,
+and `off` ignores it. Missing or malformed declarations fail open. Hermes applies this contract to cron assistant output,
+not to the cron prompt, and no content or origin heuristic is used.
 
 Observation and Mental Model derivation is a separate maintenance path, not part of the Claim write transaction. The
 mental-model worker evaluates active evidence after ingestion and writes or refreshes derivations when its evidence rules
@@ -449,7 +464,7 @@ uses namespace-scoped lexical OR retrieval, selects one assistant turn, deduplic
 The stdlib-only `scripts/healthcheck.py` probe exposes `/healthz` to deployment supervision on every platform;
 systemd, Windows service management, or the container orchestrator owns restart policy and alerting.
 
-The 59 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
+The 60 immutable SQL migrations are applied in order. Migrations 035–037 introduced the injected feedback boundary,
 tokenized FTS v2, and vector-backend dirty state. Migration 038 registers a Python data migration that canonicalizes
 persona subjects and rebuilds derived identities under a write transaction; large databases need a backup and maintenance
 window. Migration 039 adds nullable Event locator metadata, migration 040 adds the bounded deferred-task queue used
@@ -464,7 +479,9 @@ entities and Claim links, plan outcomes, and slot-aware dedup strategy metadata.
 database-boundary auditing for Claim UPDATE/DELETE mutations. Migration 057 retires non-terminal legacy conflict-judge
 jobs, clears their leases, and marks linked open cases dirty without modifying succeeded/dead history. Migration 058
 terminates pending semantic jobs and abandons pending resurrection work disabled by the Core 1.0 defaults; migration 059
-adds immutable provenance to relation edges and binds approved-Proposal edges to their source Proposal. They run automatically on first open;
+adds immutable provenance to relation edges and binds approved-Proposal edges to their source Proposal. Migration 060
+adds `origin_class` and `session_kind` to Events with legacy-safe `unknown` defaults and no historical reclassification.
+They run automatically on first open;
 schema migration never adjudicates conflicts, applies dedup pairs, or closes plans. The optional `sqlite_vec.py` data migration owns the dimension-specific
 derived vector table; the default remains exact `sqlite_scan`.
 
@@ -488,8 +505,8 @@ cannot alter the verified image.
 
 All runtime paths, provider models, timeouts, and feature modes come from one validated `Settings` snapshot loaded from
 `hl_mem.toml`. Only five provider credentials come from `.env` or same-named process environment variables. Image file
-inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. PostgreSQL is only an
-experimental connectivity probe and does not implement HL-Mem storage semantics.
+inputs remain disabled unless explicitly enabled and constrained to configured allow-roots. SQLite is the only supported
+authoritative store; the product does not advertise an incomplete PostgreSQL backend.
 
 ### Development and deployment commands
 
@@ -511,15 +528,22 @@ production profile or automatic fake fallback.
 
 Install the Hermes adapter with `uv run python scripts/install_to_hermes.py --hermes-home <HERMES_HOME>`, then restart Hermes.
 
-The offline suite uses fake providers; the real-provider script requires configured credentials:
+The offline suite uses fake providers. During development, run only the directly relevant test file. A final candidate
+normally runs the core suite once with four workers; a second core run is allowed only when the first run causes a code
+change. An identical fast-forward merge reuses the verified commit result. Release-only validation runs separately and
+serially before release:
 
-```bash
-.venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/python.exe tests/e2e_real.py
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/test_relevant_file.py -q --tb=short
+.venv\Scripts\python.exe -W error::ResourceWarning -m pytest tests/ `
+  -m "not release_only" -n 4 -q --tb=short --durations=25
+.venv\Scripts\python.exe -m pytest tests/ -m release_only -q --tb=short
+.venv\Scripts\python.exe tests/e2e_real.py
 ```
 
-These commands are documented for operators; documentation-only changes should still follow the validation scope stated by
-their task. This restructure intentionally does not execute pytest.
+Python 3.13 is the sole CI-authoritative runtime. Package installation metadata is unchanged; installability on another
+Python version is not a CI compatibility promise. The real-provider script requires configured credentials. These commands
+are documented for operators; documentation-only changes should still follow the validation scope stated by their task.
 
 ## 10. Evolution Constraints
 

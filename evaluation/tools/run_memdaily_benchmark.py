@@ -19,7 +19,7 @@ import re
 import sys
 import time
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +30,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from evaluation.tools.run_identity_gate import (  # noqa: E402
+    assert_run_identity_from_env,
+    finalize_report_identity,
+)
 from hl_mem import __version__  # noqa: E402
 from hl_mem.application.answerability import Answerability, abstention_kind  # noqa: E402
 from hl_mem.application.ingest import IngestService  # noqa: E402
@@ -49,6 +53,7 @@ from hl_mem.evaluation.memdaily import (  # noqa: E402
 )
 from hl_mem.ingest.llm_extractor import LLM_EXTRACTOR_VERSION  # noqa: E402
 from hl_mem.llm.types import StructuredOutputMode  # noqa: E402
+from hl_mem.observability.audit import audit_scope  # noqa: E402
 from hl_mem.recall.relation_expansion import RelationExpansionConfig  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
 from hl_mem.storage.database import Database  # noqa: E402
@@ -59,6 +64,13 @@ DEFAULT_ENV_FILE = ROOT / ".env"
 DATABASE_ROOT = ROOT / "var" / "benchmark_memdaily"
 RECALL_K = 10  # recall limit; recall@5 computed from top-5
 QA_FALLBACK_MODEL = "qwen3.7-plus"
+QAChat = Callable[[str, str, str, str, str], tuple[str, int]]
+_CLAIM_BUDGET_COUNT_FIELDS = (
+    "generated_claim_count",
+    "retained_claim_count",
+    "dropped_claim_count",
+)
+_CLAIM_BUDGET_EVENT_FIELDS = (*_CLAIM_BUDGET_COUNT_FIELDS, "chunk_index", "start_unit", "end_unit")
 
 
 # ─── Normalization & data structures ──────────────────────────────────────────
@@ -91,6 +103,64 @@ class MemDailyTrajectory:
     choices: dict[str, str]
     messages: tuple[MemDailyMessage, ...]
     gold_event_ids: tuple[str, ...]
+
+
+class _ClaimBudgetAuditLogger:
+    """Capture only bounded extraction-cap counters safe for benchmark reports."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, int]] = []
+
+    def emit(
+        self,
+        phase: str,
+        action: str,
+        outcome: str,
+        *,
+        detail: Mapping[str, Any] | None = None,
+        **_dimensions: Any,
+    ) -> bool:
+        if (phase, action, outcome) != ("extract", "claim_budget", "overflow_truncated"):
+            return False
+        if not isinstance(detail, Mapping):
+            return False
+        event: dict[str, int] = {}
+        for field in _CLAIM_BUDGET_EVENT_FIELDS:
+            value = detail.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                return False
+            event[field] = value
+        self.events.append(event)
+        return True
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "overflow_truncated_count": len(self.events),
+            **{field: sum(event[field] for event in self.events) for field in _CLAIM_BUDGET_COUNT_FIELDS},
+            "events": list(self.events),
+        }
+
+
+def aggregate_claim_budget_telemetry(ingests: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """Aggregate per-ingest cap telemetry without copying event- or claim-level content."""
+
+    totals = {
+        "observed_ingests": 0,
+        "unobserved_ingests": 0,
+        "overflow_truncated_count": 0,
+        **{field: 0 for field in _CLAIM_BUDGET_COUNT_FIELDS},
+    }
+    for ingest in ingests:
+        budget = ingest.get("claim_budget")
+        if not isinstance(budget, Mapping):
+            totals["unobserved_ingests"] += 1
+            continue
+        totals["observed_ingests"] += 1
+        for field in ("overflow_truncated_count", *_CLAIM_BUDGET_COUNT_FIELDS):
+            value = budget.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                totals[field] += value
+    return totals
 
 
 # ─── Data loading ─────────────────────────────────────────────────────────────
@@ -465,7 +535,7 @@ def _ingest_trajectory(
     """Ingest all messages of a trajectory into hl_mem with real LLM extraction."""
     service = IngestService(connection)
     extractor = make_extractor(settings, require_real=True, connection=connection)
-    stats = {
+    stats: dict[str, Any] = {
         "messages": len(traj.messages),
         "extracted_claims": 0,
         "stored_claims": 0,
@@ -474,6 +544,7 @@ def _ingest_trajectory(
         "output_tokens": 0,
         "total_tokens": 0,
     }
+    claim_budget_audit = _ClaimBudgetAuditLogger()
     started = time.perf_counter()
 
     for index, msg in enumerate(traj.messages, start=1):
@@ -497,14 +568,15 @@ def _ingest_trajectory(
         service.ingest_event(event)
         event["extractor"] = "llm"
         event["extractor_version"] = getattr(extractor, "extractor_version", LLM_EXTRACTOR_VERSION)
-        claims = extractor.extract(
-            content,
-            {
-                "actor_type": "user",
-                "event_type": "message",
-                "occurred_at": msg.occurred_at,
-            },
-        )
+        with audit_scope(claim_budget_audit, event_id=msg.event_id):
+            claims = extractor.extract(
+                content,
+                {
+                    "actor_type": "user",
+                    "event_type": "message",
+                    "occurred_at": msg.occurred_at,
+                },
+            )
         stats["extracted_claims"] += len(claims)
         stats["input_tokens"] += int(getattr(extractor, "last_input_tokens", 0))
         stats["output_tokens"] += int(getattr(extractor, "last_output_tokens", 0))
@@ -532,6 +604,7 @@ def _ingest_trajectory(
                 flush=True,
             )
 
+    stats["claim_budget"] = claim_budget_audit.summary()
     stats["elapsed_seconds"] = round(time.perf_counter() - started, 3)
     return stats
 
@@ -729,6 +802,7 @@ def _run_qa(
     settings: Settings,
     *,
     answerability: Answerability = "supported",
+    qa_chat: QAChat | None = None,
 ) -> dict[str, Any]:
     """Ask the LLM to answer the question using retrieved claims.
 
@@ -760,8 +834,13 @@ def _run_qa(
             "usage": {"total_tokens": 0},
         }
 
-    # Resolve API key: prefer env override, then settings
-    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or settings.llm_api_key
+    # Resolve API key: prefer the evaluation reader override, then existing fallbacks.
+    api_key = (
+        os.environ.get("HL_MEM_EVAL_QA_API_KEY")
+        or os.environ.get("LLM_API_KEY")
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or settings.llm_api_key
+    )
     if not api_key:
         raise RuntimeError("QA answering requires LLM_API_KEY or DASHSCOPE_API_KEY " "in .env or environment")
 
@@ -796,7 +875,8 @@ def _run_qa(
     )
     user_prompt = f"记忆片段:\n{context or '(无)'}\n\n" f"问题: {traj.question}{choice_instruction}"
 
-    answer_text, total_tokens = _qa_dashscope_chat(api_key, base_url, qa_model, system_prompt, user_prompt)
+    selected_chat = qa_chat or _qa_dashscope_chat
+    answer_text, total_tokens = selected_chat(api_key, base_url, qa_model, system_prompt, user_prompt)
 
     # Extract predicted answer and choice letter from text response
     predicted = answer_text.strip()
@@ -1026,6 +1106,7 @@ def _report(
     run_qa: bool,
 ) -> dict[str, Any]:
     """Build the final report dict."""
+    ingests = [result["ingest"] for result in results if isinstance(result.get("ingest"), Mapping)]
     return {
         "schema_version": 1,
         "benchmark": "memdaily",
@@ -1041,6 +1122,7 @@ def _report(
             "total_trajectories": len(trajectories),
             "skip_ingest": skip_ingest,
             "qa_enabled": run_qa,
+            "claim_budget": aggregate_claim_budget_telemetry(ingests),
             "models": {
                 "extractor": settings.llm_model,
                 "extractor_version": LLM_EXTRACTOR_VERSION,
@@ -1172,7 +1254,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.source.is_file():
         raise FileNotFoundError(f"MemDaily source not found: {args.source}")
+    if args.clean:
+        raise ValueError("--clean is incompatible with identity postflight; retain cache manifests")
 
+    identity = assert_run_identity_from_env(
+        config_path=args.config,
+        env_path=args.env_file,
+        required=True,
+    )
+    assert identity is not None
     settings = load_settings(args.config, args.env_file)
     # Benchmark DBs are small — force sqlite_scan to avoid sqlite-vec dependency.
     settings = dataclasses.replace(settings, vector_backend="sqlite_scan")
@@ -1264,6 +1354,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_qa=run_qa,
     )
     _write_json_atomic(args.output, report)
+    finalize_report_identity(
+        report,
+        report_path=args.output,
+        expected_extractor_version=identity.expected_extractor_version,
+        expected_manifest_count=total,
+    )
 
     # Generate Markdown report
     md_path = args.output.with_suffix(".md")

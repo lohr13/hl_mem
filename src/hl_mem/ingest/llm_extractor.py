@@ -10,8 +10,6 @@ import unicodedata
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
-from pydantic import ValidationError as PydanticValidationError
-
 from hl_mem.domain.action_coordinates import project_action_qualifiers
 from hl_mem.domain.claims.attributes import (
     _HIGH_CONFIDENCE_ATTRIBUTE_PATTERNS,
@@ -35,13 +33,9 @@ from hl_mem.domain.entity import (
     DEFAULT_ENTITY_ALIASES,
     normalize_entity_alias,
 )
-from hl_mem.errors import LLMOutputTruncatedError, LLMSchemaValidationError
 from hl_mem.llm.client import LLMClient
 from hl_mem.llm.types import (
-    LLMMessage,
-    LLMRequest,
     StructuredOutputMode,
-    StructuredOutputSpec,
 )
 from hl_mem.observability.audit import current_audit
 
@@ -64,12 +58,18 @@ from .admission import (
 from .chunking import (
     ChunkingPolicy,
     ExtractionChunk,
-    bisect_extraction_chunk,
-    split_extraction_content,
+)
+from .extraction.model_coordinates import (
+    MODEL_TASK_SOURCE_MARKERS,
+    project_model_coordinates,
+)
+from .extraction.orchestrator import (
+    ExtractionOrchestrator,
+    ExtractionOrchestratorConfig,
+    ExtractionOrchestratorHooks,
 )
 from .extraction.parsing import (
     count_repairs,
-    is_claim_count_overflow,
     looks_like_truncated_json,
     parse_json_response,
     parse_legacy_defaults,
@@ -87,12 +87,14 @@ from .extraction.prompts import (
     SOURCE_BOUNDED_RAO_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
 )
-from .extraction.repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN, repair_extraction_json
+from .extraction.repair import ENUM_MAPPINGS, TOPIC_TAG_ZH_TO_EN
+from .extraction.run_state import ExtractionRunState
 from .extraction.schema import (
     CompactExtractionResponseSchema,
     ExtractionResponseSchema,
     temporal_gate_extraction_response_json_schema,
 )
+from .extraction.verification import VerificationCoordinator
 from .extractors import ExtractedClaim
 from .relative_time import infer_occurrence, relative_time_rules_fingerprint
 from .verifier import EntailmentVerifier
@@ -116,7 +118,7 @@ _EN_FUNCTION_SIGNAL_RE = re.compile(
     r"(?i)\b(?:i|we|you|he|she|it|the|a|an|to|of|in|on|at|for|with|my|our|your|this|that|yesterday|tomorrow)\b"
 )
 LANGUAGE_ROUTER_VERSION = "language-router-v1"
-CLAIM_COUNT_OVERFLOW_POLICY_VERSION = "claim-count-auto-split-v1"
+CLAIM_COUNT_OVERFLOW_POLICY_VERSION = "deterministic-claim-budget-v1"
 _UNSETTLED_SIGNAL_RE = re.compile(r"可以考虑|建议|考虑|待定|或许|计划中|未执行")
 _SETTLED_SIGNAL_RE = re.compile(
     r"已经确认|已确认|已经批准|已批准|已经执行|已执行|已经实施|已实施|"
@@ -193,33 +195,7 @@ _KIND_TOPIC_TAG = {
 }
 _NOTABILITY_IMPORTANCE = {"high": 0.9, "medium": 0.6, "low": 0.3}
 _ENV_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
-_MODEL_TASK_SOURCE_MARKERS = (
-    "reader",
-    "judge",
-    "extractor",
-    "embedding",
-    "reranker",
-    "summarization",
-    "compression",
-    "translation",
-    "code generation",
-    "image generation",
-    "vision",
-    "阅读",
-    "评审",
-    "裁判",
-    "提取",
-    "嵌入",
-    "重排",
-    "摘要",
-    "压缩",
-    "翻译",
-    "代码生成",
-    "图像生成",
-    "视觉",
-    "验证",
-    "测试",
-)
+_MODEL_TASK_SOURCE_MARKERS = MODEL_TASK_SOURCE_MARKERS
 _TECH_ENTITY_RE = re.compile(
     r"(?ix)(?<![A-Za-z0-9_])(?:"
     r"PostgreSQL|SQLite|MySQL|Redis|FastAPI|Uvicorn|PyTorch|Django|Flask|"
@@ -449,13 +425,6 @@ def _postprocess_extracted_claims(claims: list[ExtractedClaim]) -> list[Extracte
 
 
 @dataclass(frozen=True)
-class _ChunkExtractionOutcome:
-    claims: list[ExtractedClaim]
-    compact_soft_saturated: bool
-    raw_claim_count: int
-
-
-@dataclass(frozen=True)
 class ExtractionModes:
     verification_mode: Literal["off", "audit", "enforce"] = "off"
     lesson_signal_mode: Literal["off", "observe", "enforce"] = "observe"
@@ -467,26 +436,6 @@ def _resolve_extraction_modes(modes: ExtractionModes | None, legacy_modes: dict[
     if modes is not None and legacy_modes:
         raise TypeError("modes cannot be combined with legacy extraction mode keywords")
     return modes or ExtractionModes(**legacy_modes)
-
-
-DELTA_REPAIR_SYSTEM_PROMPTS: dict[Literal["zh", "en"], str] = {
-    "zh": """你是记忆事实增量修复器。只补提取已接受列表尚未覆盖的原子事实。
-
-严格遵守响应 JSON Schema，只输出 JSON，不要输出解释、Markdown 或额外字段。
-- 事实只能来自 <repair_source>，<covered_claims> 仅用于判重。
-- 与 covered_claims 语义相同、近义改写、包含关系或仅措辞不同的事实都视为已覆盖，禁止输出。
-- 每条 claim 只表达一个原子事实，并保留原文中的主体、专名、数值、单位和 evidence_quote。
-- 没有新事实时返回 {"claims":[],"should_memorize":false}。
-- 最多输出 20 条新 claim。""",
-    "en": """You repair gaps in atomic memory extraction. Emit only facts not covered by the accepted list.
-
-Follow the response JSON Schema exactly. Return JSON only, with no explanation, Markdown, or extra fields.
-- Facts must come only from <repair_source>; <covered_claims> is only for duplicate avoidance.
-- Semantically equivalent facts, paraphrases, containment, and wording-only variants are already covered and forbidden.
-- Each claim states one atomic fact and preserves source subjects, names, numbers, units, and evidence_quote.
-- If there are no new facts, return {"claims":[],"should_memorize":false}.
-- Return at most 20 new claims.""",
-}
 
 
 class LLMExtractor:
@@ -531,16 +480,107 @@ class LLMExtractor:
         self.lesson_signal_mode = lesson_signals.validate_lesson_signal_mode(modes.lesson_signal_mode)
         self.verification_claim_threshold = modes.verification_claim_threshold
         self.verification_empty_text_threshold = modes.verification_empty_text_threshold
-        self.last_usage_tokens = 0
-        self.last_input_tokens = 0
-        self.last_output_tokens = 0
-        self._schema_retry_count = 0
-        self._repair_count = 0
-        self._llm_call_count = 0
-        self._memorize_decisions: list[tuple[bool, str]] = []
-        self._last_schema_errors: list[dict[str, Any]] = []
-        self._secret_rejections: dict[str, int] = {}
-        self._relation_metadata_counts: dict[str, int] = {}
+        self._run_state = ExtractionRunState()
+        self._verification = VerificationCoordinator(
+            verifier=self.verifier,
+            mode=self.verification_mode,
+            claim_threshold=self.verification_claim_threshold,
+            empty_text_threshold=self.verification_empty_text_threshold,
+            audit_getter=current_audit,
+        )
+        self._orchestrator = ExtractionOrchestrator(
+            client=self.llm_client,
+            provider_name=self.provider_name,
+            model=self.model,
+            config=ExtractionOrchestratorConfig(
+                chunking_policy=self.chunking_policy,
+                schema_retries=self.schema_retries,
+                structured_mode=self.structured_mode,
+                soft_split_enabled=self.soft_split_enabled,
+                delta_repair_enabled=self.delta_repair_enabled,
+            ),
+            hooks=ExtractionOrchestratorHooks(
+                bind_run_state=self._bind_run_state,
+                project_claims=self._project_extraction_result,
+                verify_claims=self._verify_extracted_claims,
+                postprocess_claims=_postprocess_extracted_claims,
+                system_prompt_for_language=self._system_prompt_for_language,
+                response_json_schema=self._response_json_schema,
+                language_detector=detect_extraction_language,
+                legacy_claim_defaults=_LEGACY_CLAIM_DEFAULTS,
+                kind_values=set(_KIND_MAP),
+                notability_values=set(_NOTABILITY_IMPORTANCE),
+                extractor_hash=self.prompt_hash,
+            ),
+            verification_enabled=self.verifier is not None and self.verification_mode != "off",
+        )
+
+    def _bind_run_state(self, state: ExtractionRunState) -> None:
+        self._run_state = state
+
+    @property
+    def last_usage_tokens(self) -> int:
+        return self._run_state.total_tokens
+
+    @last_usage_tokens.setter
+    def last_usage_tokens(self, value: int) -> None:
+        self._run_state.total_tokens = value
+
+    @property
+    def last_input_tokens(self) -> int:
+        return self._run_state.input_tokens
+
+    @last_input_tokens.setter
+    def last_input_tokens(self, value: int) -> None:
+        self._run_state.input_tokens = value
+
+    @property
+    def last_output_tokens(self) -> int:
+        return self._run_state.output_tokens
+
+    @last_output_tokens.setter
+    def last_output_tokens(self, value: int) -> None:
+        self._run_state.output_tokens = value
+
+    @property
+    def _schema_retry_count(self) -> int:
+        return self._run_state.schema_retry_count
+
+    @_schema_retry_count.setter
+    def _schema_retry_count(self, value: int) -> None:
+        self._run_state.schema_retry_count = value
+
+    @property
+    def _repair_count(self) -> int:
+        return self._run_state.repair_count
+
+    @_repair_count.setter
+    def _repair_count(self, value: int) -> None:
+        self._run_state.repair_count = value
+
+    @property
+    def _llm_call_count(self) -> int:
+        return self._run_state.llm_call_count
+
+    @_llm_call_count.setter
+    def _llm_call_count(self, value: int) -> None:
+        self._run_state.llm_call_count = value
+
+    @property
+    def _memorize_decisions(self) -> list[tuple[bool, str]]:
+        return self._run_state.memorize_decisions
+
+    @property
+    def _last_schema_errors(self) -> list[dict[str, Any]]:
+        return self._run_state.schema_errors
+
+    @property
+    def _secret_rejections(self) -> dict[str, int]:
+        return self._run_state.secret_rejections
+
+    @property
+    def _relation_metadata_counts(self) -> dict[str, int]:
+        return self._run_state.relation_metadata_counts
 
     @property
     def last_relation_metadata(self) -> dict[str, int]:
@@ -553,268 +593,8 @@ class LLMExtractor:
         return self._llm_call_count
 
     def extract(self, content: dict[str, Any] | str, context: dict[str, Any] | None = None) -> list[ExtractedClaim]:
-        """同步分块提取事实，并在输出截断或 claim 数超限时递归二分恢复。"""
-        self.last_usage_tokens = 0
-        self.last_input_tokens = 0
-        self.last_output_tokens = 0
-        self._schema_retry_count = 0
-        self._repair_count = 0
-        self._llm_call_count = 0
-        self._memorize_decisions = []
-        self._last_schema_errors = []
-        self._secret_rejections = {}
-        self._relation_metadata_counts = {}
-        event_context = context or {}
-        chunks = split_extraction_content(content, self.chunking_policy)
-        chunk_claims = [self._extract_chunk_with_auto_split(chunk, event_context, depth=0) for chunk in chunks]
-        claims = self._merge_chunk_claims(chunk_claims)
-        if self.verifier is None or self.verification_mode == "off":
-            claims = _postprocess_extracted_claims(claims)
-        if self._secret_rejections:
-            current_audit().emit(
-                "extract",
-                "secret_rejected",
-                "rejected",
-                detail={
-                    "count": sum(self._secret_rejections.values()),
-                    "reason_counts": self._secret_rejections,
-                    "extractor_hash": self.prompt_hash,
-                },
-            )
-        if LOGGER.isEnabledFor(logging.DEBUG):
-            LOGGER.debug(
-                "%s",
-                json.dumps(
-                    {
-                        "event": "llm_extraction",
-                        "actor": event_context.get("actor") or event_context.get("actor_type"),
-                        "session_id": event_context.get("session_id"),
-                        "content_length": self._content_length(content),
-                        "should_memorize": bool(claims),
-                        "reason": self._decision_reason(),
-                        "claims_count": len(claims),
-                        "schema_retry_count": self._schema_retry_count,
-                        "repair_count": self._repair_count,
-                        "llm_call_count": self._llm_call_count,
-                        "input_tokens": self.last_input_tokens,
-                        "output_tokens": self.last_output_tokens,
-                        "total_tokens": self.last_usage_tokens,
-                    },
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            )
-        return claims
-
-    def _extract_chunk_with_auto_split(
-        self,
-        chunk: ExtractionChunk,
-        event_context: dict[str, Any],
-        depth: int,
-        soft_split_applied: bool = False,
-    ) -> list[ExtractedClaim]:
-        """提取单块；输出截断或 claim 数超限时按策略递归二分。"""
-        try:
-            outcome = self._extract_one_chunk(chunk, event_context)
-            claims = outcome.claims
-            if self.verifier is not None and self.verification_mode != "off":
-                claims = self._verify_extracted_claims(_postprocess_extracted_claims(claims), chunk.text)
-            if not self.soft_split_enabled or not outcome.compact_soft_saturated:
-                return claims
-            if soft_split_applied:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_split",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                    },
-                )
-                return self._apply_delta_repair(chunk, event_context, claims)
-            split = bisect_extraction_chunk(chunk)
-            if split is None:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_split",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                        "reason": "split_unavailable",
-                    },
-                )
-                return claims
-            left, right = split
-            left_claims = self._extract_chunk_with_auto_split(
-                left,
-                event_context,
-                depth,
-                soft_split_applied=True,
-            )
-            right_claims = self._extract_chunk_with_auto_split(
-                right,
-                event_context,
-                depth,
-                soft_split_applied=True,
-            )
-            root_claims = self._merge_chunk_claims([claims])
-            merged = self._merge_chunk_claims([claims, left_claims, right_claims])
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "claim_limit_split_applied",
-                detail={
-                    "claim_count_before_split": outcome.raw_claim_count,
-                    "root_unique_claim_count": len(root_claims),
-                    "left_claim_count": len(left_claims),
-                    "right_claim_count": len(right_claims),
-                    "merged_claim_count": len(merged),
-                    "net_new_after_split": len(merged) - len(root_claims),
-                    "duplicates_removed": len(claims) + len(left_claims) + len(right_claims) - len(merged),
-                    "chunk_index": chunk.index,
-                    "start_unit": chunk.start_unit,
-                    "end_unit": chunk.end_unit,
-                    "source_length": len(chunk.text),
-                },
-            )
-            return merged
-        except LLMOutputTruncatedError as error:
-            split = bisect_extraction_chunk(chunk)
-            if depth >= self.chunking_policy.max_split_depth or split is None:
-                raise LLMOutputTruncatedError(
-                    "LLM output remains truncated after auto split: "
-                    f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
-                    f"end_unit={chunk.end_unit}, depth={depth}"
-                ) from error
-            left, right = split
-            return self._merge_chunk_claims(
-                [
-                    self._extract_chunk_with_auto_split(
-                        left,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                    self._extract_chunk_with_auto_split(
-                        right,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                ]
-            )
-        except LLMSchemaValidationError as error:
-            if not self._is_claim_count_overflow(error):
-                raise
-            split = bisect_extraction_chunk(chunk)
-            if depth >= self.chunking_policy.max_split_depth or split is None:
-                raise LLMSchemaValidationError(
-                    "LLM response claims remain over limit after auto split: "
-                    f"chunk={chunk.index}, start_unit={chunk.start_unit}, "
-                    f"end_unit={chunk.end_unit}, depth={depth}"
-                ) from error
-            left, right = split
-            return self._merge_chunk_claims(
-                [
-                    self._extract_chunk_with_auto_split(
-                        left,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                    self._extract_chunk_with_auto_split(
-                        right,
-                        event_context,
-                        depth + 1,
-                        soft_split_applied=soft_split_applied,
-                    ),
-                ]
-            )
-
-    def _apply_delta_repair(
-        self,
-        chunk: ExtractionChunk,
-        event_context: dict[str, Any],
-        residual_claims: list[ExtractedClaim],
-    ) -> list[ExtractedClaim]:
-        """对 residual 子块最多补提一次；任意失败都保留已有 claims。"""
-        if not self.delta_repair_enabled:
-            return residual_claims
-        base_detail: dict[str, Any] = {
-            "residual_claim_count": len(residual_claims),
-            "repair_new_count": 0,
-            "merged_total": len(residual_claims),
-            "net_new_after_repair": 0,
-            "duplicates_removed": 0,
-            "chunk_index": chunk.index,
-            "start_unit": chunk.start_unit,
-            "end_unit": chunk.end_unit,
-            "source_length": len(chunk.text),
-        }
-        try:
-            outcome = self._extract_one_chunk(
-                chunk,
-                event_context,
-                repair_covered_claims=residual_claims,
-            )
-            repair_claims = outcome.claims
-            if self.verifier is not None and self.verification_mode != "off":
-                repair_claims = self._verify_extracted_claims(
-                    _postprocess_extracted_claims(repair_claims),
-                    chunk.text,
-                )
-            merged = self._merge_chunk_claims([residual_claims, repair_claims])
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "delta_repair_applied",
-                detail={
-                    **base_detail,
-                    "repair_new_count": len(repair_claims),
-                    "merged_total": len(merged),
-                    "net_new_after_repair": len(merged) - len(residual_claims),
-                    "duplicates_removed": len(residual_claims) + len(repair_claims) - len(merged),
-                    "repair_status": "success",
-                },
-            )
-            if outcome.compact_soft_saturated:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "claim_limit_residual_after_repair",
-                    detail={
-                        "claim_count": outcome.raw_claim_count,
-                        "schema_limit": 30,
-                        "accepted_claim_count": len(repair_claims),
-                        "chunk_index": chunk.index,
-                        "start_unit": chunk.start_unit,
-                        "end_unit": chunk.end_unit,
-                        "source_length": len(chunk.text),
-                    },
-                )
-            return merged
-        except Exception as error:
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "delta_repair_applied",
-                detail={
-                    **base_detail,
-                    "repair_status": "failed",
-                    "error_class": type(error).__name__,
-                    "error": str(error).replace("\n", " ")[:256],
-                },
-            )
-            return residual_claims
+        """同步分块提取事实；仅在 provider 输出截断时递归二分恢复。"""
+        return list(self._orchestrator.extract(content, context).claims)
 
     def _verify_extracted_claims(
         self,
@@ -822,74 +602,15 @@ class LLMExtractor:
         source_text: str,
     ) -> list[ExtractedClaim]:
         """按 rollout 策略执行 audit-only 验证，并始终原样返回 claims。"""
-        if self.verifier is None or self.verification_mode == "off":
-            return claims
-        if not claims:
-            if len(source_text) > self.verification_empty_text_threshold:
-                current_audit().emit(
-                    "extract",
-                    "possible_under_extraction",
-                    "observed",
-                    detail={
-                        "source_length": len(source_text),
-                        "length_threshold": self.verification_empty_text_threshold,
-                        "verification_mode": self.verification_mode,
-                    },
-                )
-            return claims
-        should_verify = self.verification_mode == "enforce" or len(claims) > self.verification_claim_threshold
-        if not should_verify:
-            return claims
-        try:
-            results = self.verifier.verify_batch(claims, source_text)
-        except Exception as error:
-            self._record_verifier_usage()
-            self._emit_verification_failure(error, len(claims))
-            return claims
-        self._record_verifier_usage()
-        try:
-            if len(results) != len(claims):
-                raise ValueError("verifier result count does not match claim count")
-            for claim_index, (claim, result) in enumerate(zip(claims, results, strict=True)):
-                current_audit().emit(
-                    "extract",
-                    "entailment_checked",
-                    result.support_label,
-                    detail={
-                        "claim_index": claim_index,
-                        "claim_subject": claim.subject[:100],
-                        "claim_predicate": claim.predicate[:100],
-                        "claim_value": claim.value[:100],
-                        "rationale": result.rationale[:512],
-                        "verification_mode": self.verification_mode,
-                    },
-                )
-        except Exception as error:
-            self._emit_verification_failure(error, len(claims))
-        return claims
+        return self._verification.verify(claims, source_text, self._run_state)
 
     def _emit_verification_failure(self, error: Exception, claim_count: int) -> None:
         """记录安全、截断后的 fail-open verifier 错误。"""
-        current_audit().emit(
-            "extract",
-            "entailment_verification_failed",
-            "error",
-            detail={
-                "error_class": type(error).__name__,
-                "error": str(error).replace("\n", " ")[:256],
-                "claim_count": claim_count,
-                "verification_mode": self.verification_mode,
-            },
-        )
+        self._verification.emit_failure(error, claim_count)
 
     def _record_verifier_usage(self) -> None:
         """把额外审计调用计入提取器预算与诊断指标。"""
-        if self.verifier is None:
-            return
-        self.last_usage_tokens += int(getattr(self.verifier, "last_usage_tokens", 0))
-        self.last_input_tokens += int(getattr(self.verifier, "last_input_tokens", 0))
-        self.last_output_tokens += int(getattr(self.verifier, "last_output_tokens", 0))
-        self._llm_call_count += int(getattr(self.verifier, "last_call_count", 0))
+        self._verification.record_usage(self._run_state)
 
     @staticmethod
     def _infer_compact_qualifiers(
@@ -922,12 +643,7 @@ class LLMExtractor:
             elif key == "plan":
                 candidate = source_bounded(value[:200])
             elif key == "task" and attribute == "choice.model":
-                matches = [
-                    marker
-                    for marker in _MODEL_TASK_SOURCE_MARKERS
-                    if marker.casefold() in normalized_value and marker.casefold() in normalized_evidence
-                ]
-                candidate = matches[0] if len(matches) == 1 else None
+                candidate = None
             else:
                 candidate = source_bounded(subject)
             if candidate is not None:
@@ -1012,12 +728,23 @@ class LLMExtractor:
         fallback_attribute = PREDICATE_ATTRIBUTE_MAP[predicate][1]
         if inferred_attribute not in {"custom.unknown", fallback_attribute}:
             canonical_attribute = inferred_attribute
-        qualifiers = self._infer_compact_qualifiers(
+        model_coordinate = project_model_coordinates(
             canonical_attribute,
             subject,
             candidate.value,
             candidate.evidence_quote,
         )
+        subject = model_coordinate.subject
+        qualifiers: dict[str, Any] = self._infer_compact_qualifiers(
+            canonical_attribute,
+            subject,
+            candidate.value,
+            candidate.evidence_quote,
+        )
+        if model_coordinate.task is not None:
+            qualifiers["task"] = model_coordinate.task
+        if model_coordinate.state_change:
+            qualifiers["state_change"] = True
         qualifiers.update({"lesson_signal": lesson_signal} if enforce_lesson_signal else {})
         qualifiers = project_action_qualifiers(candidate.value, qualifiers, is_plan=candidate.kind == "plan")
         canonical_slot = validate_slot_instance(canonical_attribute, qualifiers)
@@ -1161,55 +888,15 @@ class LLMExtractor:
             self._secret_rejections[decision.reason] = self._secret_rejections.get(decision.reason, 0) + 1
         return decision
 
-    def _extract_one_chunk(
+    def _project_extraction_result(
         self,
+        result: CompactExtractionResponseSchema | ExtractionResponseSchema,
         chunk: ExtractionChunk,
         event_context: dict[str, Any],
-        *,
-        repair_covered_claims: list[ExtractedClaim] | None = None,
-    ) -> _ChunkExtractionOutcome:
-        """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
-        prompt_context = {key: value for key, value in event_context.items() if not key.startswith("_")}
-        context = json.dumps(prompt_context, ensure_ascii=False)
-        occurred_at = str(event_context.get("occurred_at", "未知"))
-        language = detect_extraction_language(chunk.text)
-        result = (
-            self._request_delta_repair(
-                chunk,
-                context,
-                occurred_at,
-                language,
-                repair_covered_claims,
-            )
-            if repair_covered_claims is not None
-            else self._request_chunk(chunk, context, occurred_at, language)
-        )
+        occurred_at: str,
+    ) -> list[ExtractedClaim]:
+        """Project validated provider output through HL-Mem admission policy."""
         compact_response = isinstance(result, CompactExtractionResponseSchema)
-        compact_soft_saturated = compact_response and len(result.claims) == 30
-        if compact_soft_saturated and repair_covered_claims is None:
-            current_audit().emit(
-                "extract",
-                "possible_under_extraction",
-                "claim_limit_reached",
-                detail={
-                    "claim_count": len(result.claims),
-                    "schema_limit": 30,
-                    "chunk_index": chunk.index,
-                    "start_unit": chunk.start_unit,
-                    "end_unit": chunk.end_unit,
-                    "source_length": len(chunk.text),
-                },
-            )
-        if not result.should_memorize and not result.claims:
-            self._memorize_decisions.append((False, "should_memorize=false"))
-            return _ChunkExtractionOutcome([], False, 0)
-        if not result.should_memorize:
-            current_audit().emit(
-                "extract",
-                "should_memorize_checked",
-                "claims_override_should_memorize_false",
-                detail={"claim_count": len(result.claims)},
-            )
         parsed: list[ExtractedClaim] = []
         source_kind = str(event_context.get("source_kind") or event_context.get("category") or "")
         if re.search(r"(?i)(?:\[quoted message\]|quoted report|历史报告|引用消息)", chunk.text):
@@ -1276,101 +963,7 @@ class LLMExtractor:
                 },
             )
             parsed.append(replace(claim, scope=normalized_scope))
-        retained = [claim for claim in parsed if not _is_low_value_claim(claim)]
-        reasons = sorted({claim.reason for claim in retained if claim.reason})
-        self._memorize_decisions.append(
-            (
-                bool(retained),
-                "；".join(reasons) if retained else "postprocess_rejected",
-            )
-        )
-        return _ChunkExtractionOutcome(retained, compact_soft_saturated, len(result.claims))
-
-    def _request_delta_repair(
-        self,
-        chunk: ExtractionChunk,
-        context: str,
-        occurred_at: str,
-        language: Literal["zh", "en"],
-        covered_claims: list[ExtractedClaim],
-    ) -> CompactExtractionResponseSchema:
-        """执行唯一一轮 compact delta repair，不做内容级重试。"""
-        covered_lines = "\n".join(
-            f"{index}. {self._compact_repair_text(claim.subject)} | {self._compact_repair_text(str(claim.value))}"
-            for index, claim in enumerate(covered_claims, start=1)
-        )
-        if language == "en":
-            user_prompt = (
-                f"Event occurred at: {occurred_at}\n"
-                f"Event context (not evidence): {context}\n"
-                "<repair_source>\n"
-                f"{chunk.text}\n"
-                "</repair_source>\n"
-                "<covered_claims>\n"
-                f"{covered_lines}\n"
-                "</covered_claims>\n"
-                "Extract only new atomic facts not covered by the list above. Do not repeat covered facts."
-            )
-        else:
-            user_prompt = (
-                f"事件发生时间 occurred_at：{occurred_at}\n"
-                f"事件上下文（不可作为证据）：{context}\n"
-                "<repair_source>\n"
-                f"{chunk.text}\n"
-                "</repair_source>\n"
-                "<covered_claims>\n"
-                f"{covered_lines}\n"
-                "</covered_claims>\n"
-                "只提取上述列表未覆盖的新原子事实，禁止复述。"
-            )
-        request = LLMRequest(
-            messages=[
-                LLMMessage(role="system", content=DELTA_REPAIR_SYSTEM_PROMPTS[language]),
-                LLMMessage(role="user", content=user_prompt),
-            ],
-            structured_output=StructuredOutputSpec(
-                name="delta_repair_response",
-                schema=self._response_json_schema(),
-                preferred_mode=self.structured_mode,
-            ),
-        )
-        response = self.llm_client.complete(request)
-        self._llm_call_count += 1
-        self.last_usage_tokens += response.usage_total_tokens
-        self.last_input_tokens += response.input_tokens or 0
-        self.last_output_tokens += response.output_tokens or 0
-        if response.finish_reason in {"length", "max_tokens"}:
-            raise LLMOutputTruncatedError(
-                f"LLM delta repair output truncated: provider={self.provider_name}, model={self.model}"
-            )
-        try:
-            raw = self._parse_json(response.content)
-            repaired = repair_extraction_json(
-                raw,
-                provider=self.provider_name,
-                model=self.model,
-            )
-            self._repair_count += self._count_repairs(raw, repaired)
-            if not self._uses_compact_schema(repaired):
-                raise ValueError("delta repair response must use compact schema")
-            claims = repaired.get("claims")
-            if isinstance(claims, list):
-                for claim in claims:
-                    if isinstance(claim, dict):
-                        claim.setdefault("action", None)
-                        claim.setdefault("object", None)
-            return CompactExtractionResponseSchema.model_validate(repaired)
-        except (PydanticValidationError, ValueError) as error:
-            raise LLMSchemaValidationError(
-                "LLM delta repair response does not contain valid compact JSON: "
-                f"provider={self.provider_name}, model={self.model}, "
-                f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
-            ) from error
-
-    @staticmethod
-    def _compact_repair_text(value: str) -> str:
-        """把已接受 claim 压成单行，避免扩大 repair prompt。"""
-        return " ".join(value.split())
+        return [claim for claim in parsed if not _is_low_value_claim(claim)]
 
     @staticmethod
     def _source_mapping(
@@ -1422,125 +1015,6 @@ class LLMExtractor:
             return str(text) if text is not None else json.dumps(content, ensure_ascii=False, sort_keys=True)
         return str(content)
 
-    def _request_chunk(
-        self,
-        chunk: ExtractionChunk,
-        context: str,
-        occurred_at: str,
-        language: Literal["zh", "en"],
-    ) -> CompactExtractionResponseSchema | ExtractionResponseSchema:
-        """请求并严格校验一个内容分块，schema 失败时执行内容级重试。"""
-        schema_errors: list[dict[str, Any]] = []
-        previous_output: Any = None
-        for attempt in range(self.schema_retries + 1):
-            if attempt:
-                self._schema_retry_count += 1
-            retry_instruction = ""
-            if schema_errors:
-                retry_instruction = self._schema_retry_instruction(previous_output, schema_errors, language)
-            if language == "en":
-                system_prompt = self._system_prompt_for_language(language)
-                user_prompt = (
-                    f"Event occurred at: {occurred_at}\n"
-                    f"Event context: {context}\n"
-                    "<context_only>\n"
-                    f"{chunk.context_prefix}\n"
-                    "</context_only>\n"
-                    "Use context_only only to resolve subjects. Do not extract claims from it.\n"
-                    "<extract_from>\n"
-                    f"{chunk.text}\n"
-                    "</extract_from>"
-                    f"{retry_instruction}"
-                )
-            else:
-                system_prompt = self._system_prompt_for_language(language)
-                user_prompt = (
-                    f"事件发生时间 occurred_at：{occurred_at}\n"
-                    f"事件上下文：{context}\n"
-                    "<context_only>\n"
-                    f"{chunk.context_prefix}\n"
-                    "</context_only>\n"
-                    "context_only 仅用于消解主语，禁止从中提取 claim。\n"
-                    "<extract_from>\n"
-                    f"{chunk.text}\n"
-                    "</extract_from>"
-                    f"{retry_instruction}"
-                )
-            request = LLMRequest(
-                messages=[
-                    LLMMessage(role="system", content=system_prompt),
-                    LLMMessage(role="user", content=user_prompt),
-                ],
-                structured_output=StructuredOutputSpec(
-                    name="extraction_response",
-                    schema=self._response_json_schema(),
-                    preferred_mode=self.structured_mode,
-                ),
-            )
-            response = self.llm_client.complete(request)
-            self._llm_call_count += 1
-            self.last_usage_tokens += response.usage_total_tokens
-            self.last_input_tokens += response.input_tokens or 0
-            self.last_output_tokens += response.output_tokens or 0
-            if response.finish_reason in {"length", "max_tokens"}:
-                raise LLMOutputTruncatedError(
-                    f"LLM output truncated: provider={self.provider_name}, model={self.model}"
-                )
-            previous_output_payload: Any = response.content
-            try:
-                raw = self._parse_json(response.content)
-                previous_output_payload = raw
-                repaired = repair_extraction_json(
-                    raw,
-                    provider=self.provider_name,
-                    model=self.model,
-                )
-                self._repair_count += self._count_repairs(raw, repaired)
-                if self._uses_compact_schema(repaired):
-                    claims = repaired.get("claims")
-                    if isinstance(claims, list):
-                        for claim in claims:
-                            if isinstance(claim, dict):
-                                claim.setdefault("action", None)
-                                claim.setdefault("object", None)
-                    return CompactExtractionResponseSchema.model_validate(repaired)
-                compatible = self._parse_legacy_defaults(repaired)
-                return ExtractionResponseSchema.model_validate(compatible)
-            except (PydanticValidationError, ValueError) as error:
-                if isinstance(error, PydanticValidationError):
-                    self._last_schema_errors.extend(dict(item) for item in error.errors())
-                if self._looks_like_truncated_json(response.content):
-                    raise LLMOutputTruncatedError(
-                        f"LLM output appears truncated: provider={self.provider_name}, model={self.model}"
-                    ) from error
-                if self._is_claim_count_overflow(error):
-                    raise LLMSchemaValidationError(
-                        "LLM response claims exceed the per-chunk schema limit; auto split required: "
-                        f"provider={self.provider_name}, model={self.model}, "
-                        f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
-                    ) from error
-                previous_output = previous_output_payload
-                schema_errors = self._schema_error_details(error, previous_output)
-                if attempt == self.schema_retries:
-                    raise LLMSchemaValidationError(
-                        "LLM response does not contain valid JSON or match schema: "
-                        f"provider={self.provider_name}, model={self.model}, "
-                        f"chunk_length={len(chunk.text)}, errors={self._schema_error_paths(error)}"
-                    ) from error
-        raise RuntimeError("unreachable")
-
-    @staticmethod
-    def _content_length(content: dict[str, Any] | str) -> int:
-        """返回实际待提取文本长度。"""
-        if isinstance(content, dict) and isinstance(content.get("text"), str):
-            return len(content["text"])
-        return len(content) if isinstance(content, str) else len(json.dumps(content, ensure_ascii=False))
-
-    def _decision_reason(self) -> str:
-        """合并分块判定原因并保持稳定顺序。"""
-        reasons = list(dict.fromkeys(reason for _decision, reason in self._memorize_decisions if reason))
-        return "；".join(reasons) or "no_chunks"
-
     @staticmethod
     def _count_repairs(original: Any, repaired: Any) -> int:
         return count_repairs(original, repaired)
@@ -1564,10 +1038,6 @@ class LLMExtractor:
     @staticmethod
     def _schema_error_paths(error: Exception) -> list[str]:
         return schema_error_paths(error)
-
-    @staticmethod
-    def _is_claim_count_overflow(error: BaseException) -> bool:
-        return is_claim_count_overflow(error)
 
     @staticmethod
     def _schema_error_details(error: Exception, payload: Any) -> list[dict[str, Any]]:

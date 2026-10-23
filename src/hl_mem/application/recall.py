@@ -8,11 +8,12 @@ import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from hl_mem.application import recall_delivery as _recall_delivery
 from hl_mem.application._procedure_recall_flow import ProcedureRecallFlow as _ProcedureRecallFlow
 from hl_mem.application.answerability import Answerability
 from hl_mem.application.context_packet import (
@@ -35,7 +36,11 @@ from hl_mem.application.recall_delivery import (
 )
 from hl_mem.application.recall_enrichment import assemble_observations as assemble_recall_observations
 from hl_mem.application.recall_enrichment import assemble_results as assemble_recall_results
-from hl_mem.application.recall_side_effects import RecallSideEffectSink
+from hl_mem.application.recall_side_effects import (
+    RecallSideEffectCoordinator,
+    RecallSideEffectSink,
+    emit_recall_failure,
+)
 from hl_mem.application.resurrection import ResurrectionService
 from hl_mem.domain.recall import RecallIntent, route_recall_intent
 from hl_mem.experience.service import ExperienceService
@@ -45,10 +50,9 @@ from hl_mem.protocols import (
     IntentRouterProtocol,
     RerankerProtocol,
     WeightedQuery,
-    embed_query,
 )
 from hl_mem.recall.echo_suppression import EchoRequest, EchoSuppressionPolicy
-from hl_mem.recall.entity_query import plan_query_entity
+from hl_mem.recall.entity_query import QueryEntityPlan
 from hl_mem.recall.freshness_annotation import (
     DEFAULT_FRESHNESS_ANNOTATION_METRICS,
     FreshnessAnnotationPolicy,
@@ -57,9 +61,9 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessRequest,
 )
 from hl_mem.recall.injection import InjectionContext
-from hl_mem.recall.procedure_pipeline import MemoryCandidate
 from hl_mem.recall.procedure_pipeline import recall_procedure as recall_procedure
 from hl_mem.recall.query_expansion import QueryExpander
+from hl_mem.recall.query_planning import LowRecallExpander, QueryPlanningSession, load_session_context
 from hl_mem.recall.recall_pipeline import RecallConfig, hybrid_claims, matching_policies
 from hl_mem.recall.relation_expansion import RelationExpansionConfig
 from hl_mem.recall.relevance import (
@@ -67,13 +71,14 @@ from hl_mem.recall.relevance import (
     evaluate_relevance,
     should_enforce_relevance,
 )
-from hl_mem.recall.trace import QueryExpansionTrace, SearchPhaseMetrics, SearchTrace, SearchTracer
+from hl_mem.recall.staged_pipeline import EntityScopeFallback
+from hl_mem.recall.trace import SearchPhaseMetrics, SearchTrace, SearchTracer
 from hl_mem.settings import Settings
 from hl_mem.storage.claims import ClaimRepository
-from hl_mem.storage.events import EventRepository
 from hl_mem.storage.evidence import EvidenceRepository
 
 LOGGER = logging.getLogger(__name__)
+budget_pack_by_type = _recall_delivery.budget_pack_by_type
 _RESPONSE_FORMATS = frozenset({"legacy", "context_packet", "both", "retrieval_bundle"})
 _SIDE_EFFECT_LOCK = threading.Lock()
 _SIDE_EFFECT_HEALTH: dict[str, dict[str, int | str | None]] = {
@@ -126,9 +131,6 @@ class EnrichedSelection:
     policies: list[dict[str, Any]] = field(default_factory=list)
     packet_candidates: list[dict[str, Any]] = field(default_factory=list)
     answerability: Answerability = "no_evidence"
-
-
-_LowRecallExpander = Callable[[int, int], tuple[list[WeightedQuery], list[bytes]]]
 
 
 def _freshness_item(memory_type: str, item_id: str, text: str, metadata: Mapping[str, Any]) -> FreshnessItem:
@@ -273,107 +275,7 @@ def budget_pack(items: list[dict[str, Any]], token_budget: int) -> list[dict[str
     return packed
 
 
-def _session_context(
-    connection: sqlite3.Connection,
-    namespace: str,
-    session_id: str,
-    *,
-    max_events: int,
-    token_budget: int,
-) -> tuple[tuple[tuple[str, str], ...], bool, str | None, str]:
-    """读取并按粗略 token 预算装入同命名空间会话的用户/助手文本。"""
-    before = {"occurred_at": "\U0010ffff", "id": "\U0010ffff"}
-    events = EventRepository(connection).get_recent_events(
-        namespace,
-        session_id,
-        before,
-        max_events + 1,
-        ("user", "assistant"),
-    )
-    truncated = len(events) > max_events
-    selected: list[tuple[str, str]] = []
-    used = 0
-    for event in events[:max_events]:
-        role = str(event.get("actor_type") or "")
-        if role not in {"user", "assistant"}:
-            continue
-        try:
-            content = json.loads(str(event.get("content_json") or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        text = content if isinstance(content, str) else content.get("text") if isinstance(content, dict) else None
-        if not isinstance(text, str) or not text.strip():
-            continue
-        normalized = text.strip()
-        cost = max(1, (len(normalized) + 1) // 2)
-        if used + cost > token_budget:
-            truncated = True
-            continue
-        selected.append((role, normalized))
-        used += cost
-    selected.reverse()
-    context = tuple(selected)
-    if not context:
-        return (), truncated, None, "empty"
-    serialized = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-    return context, truncated, hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "ok"
-
-
-def budget_pack_by_type(
-    candidates: list[MemoryCandidate],
-    intent: RecallIntent,
-    token_budget: int,
-) -> tuple[list[MemoryCandidate], dict[str, int], int]:
-    """按 Tool/Procedure 类型配额装箱，并将未使用预算按固定顺序回流。"""
-    ratios = (
-        {"policy": 0.35, "episode": 0.25, "trace": 0.15, "claim": 0.25}
-        if intent is RecallIntent.TOOL
-        else {"policy": 0.40, "episode": 0.20, "trace": 0.25, "claim": 0.15}
-    )
-    quotas = {kind: int(token_budget * ratio) for kind, ratio in ratios.items()}
-    grouped = {kind: [item for item in candidates if item.memory_type == kind] for kind in ratios}
-    packed: list[MemoryCandidate] = []
-    used_by_type = {kind: 0 for kind in ratios}
-    remaining = {kind: list(items) for kind, items in grouped.items()}
-
-    def candidate_text(item: MemoryCandidate) -> str:
-        return (
-            render_memory_text(
-                item.text,
-                role=item.role,
-                action=item.action,
-                object_=item.object,
-            )
-            if item.memory_type == "claim"
-            else item.text
-        )
-
-    def take(kind: str, allowance: int) -> int:
-        used = 0
-        retained: list[MemoryCandidate] = []
-        for item in remaining[kind]:
-            cost = estimate_tokens(candidate_text(item))
-            if used + cost <= allowance:
-                packed.append(item)
-                used += cost
-            else:
-                retained.append(item)
-        remaining[kind] = retained
-        used_by_type[kind] += used
-        return used
-
-    for kind, quota in quotas.items():
-        take(kind, quota)
-    total_used = sum(used_by_type.values())
-    reflow_budget = max(0, token_budget - total_used)
-    reflow_used = 0
-    for kind in ("policy", "episode", "claim", "trace"):
-        used = take(kind, reflow_budget)
-        reflow_used += used
-        reflow_budget -= used
-    order = {id(item): index for index, item in enumerate(candidates)}
-    packed.sort(key=lambda item: order[id(item)])
-    return packed, quotas, reflow_used
+_session_context = load_session_context
 
 
 def _now() -> str:
@@ -381,159 +283,42 @@ def _now() -> str:
 
 
 class _QueryExpansionSession:
-    """一次 recall 的 query expansion 状态与 deadline。"""
+    """Compatibility wrapper for the existing application-level patch seam."""
 
     def __init__(self, service: RecallService, recall: _RecallSession) -> None:
-        self.service = service
-        self.recall = recall
-        self.deadline = time.monotonic() + service.settings.query_expansion_total_timeout_seconds
-        self.tracer = recall.tracer
-        self.session_context: tuple[tuple[str, str], ...] = ()
-        request = recall.request
-        self.weighted_queries = [WeightedQuery(request.query, "original", 1.0)]
-        self.query_blobs = [
-            embed_query(service.embedder, request.query) if service.settings.recall_dense_enabled else b""
-        ]
-        self.entity_plan = plan_query_entity(
-            service.connection, request.query, request.namespace, service.settings.entity_constraint_mode
+        self._planning = QueryPlanningSession(
+            service,
+            recall,
+            monotonic=time.monotonic,
+            context_reader=_session_context,
         )
-        self.entity_plan.record(self.tracer.trace)
-        if service.settings.entity_constraint_mode == "enforce" and self.entity_plan.rewrite:
-            self.weighted_queries[0] = WeightedQuery(self.entity_plan.rewrite, "original", 1.0)
-            self.query_blobs[0] = (
-                embed_query(service.embedder, self.entity_plan.rewrite)
-                if service.settings.recall_dense_enabled
-                else b""
-            )
-        self.low_recall_expander: _LowRecallExpander | None = None
 
     def prepare(self) -> _QueryExpansionSession:
-        request = self.recall.request
-        service = self.service
-        context_available = service.settings.query_context_mode != "off"
-        initial_trigger = QueryExpander.trigger_for(
-            request.query,
-            service.settings.query_expansion_mode,
-            context_available=context_available,
-        )
-        additions_made = False
-        if initial_trigger is not None and service.query_expander is not None:
-            additions, blobs = self.expand_for(initial_trigger)
-            additions_made = bool(additions)
-            self.weighted_queries.extend(additions)
-            self.query_blobs.extend(blobs)
-        if (
-            service.settings.query_expansion_mode == "auto"
-            and not additions_made
-            and service.query_expander is not None
-        ):
-            self.low_recall_expander = self._expand_for_low_recall
+        self._planning.prepare()
         return self
 
-    def expand_for(self, trigger: str) -> tuple[list[WeightedQuery], list[bytes]]:
-        request = self.recall.request
-        service = self.service
-        trace_source = {
-            "short_query": "llm_short",
-            "coreference": "llm_coreference",
-            "low_recall": "llm_low_recall",
-            "low_fts_recall": "llm_low_recall",
-            "always": "llm_short",
-        }.get(trigger, "llm_short")
-        self.tracer.trace.expansion_trigger = trigger
-        if service.query_expander is None or time.monotonic() >= self.deadline:
-            self.tracer.trace.expansions.append(QueryExpansionTrace.from_text("", trace_source, 0.6, outcome="timeout"))
-            return [], []
-        self.session_context = ()
-        self.tracer.trace.context_outcome = "disabled"
-        if trigger == "coreference" and service.settings.query_context_mode == "coreference":
-            if not request.session_id:
-                self.tracer.trace.context_outcome = "missing_session"
-                return [], []
-            if time.monotonic() >= self.deadline:
-                self.tracer.trace.context_outcome = "deadline_exhausted"
-                return [], []
-            try:
-                self.session_context, context_truncated, context_hash, context_outcome = _session_context(
-                    service.connection,
-                    request.namespace,
-                    request.session_id,
-                    max_events=service.settings.query_context_max_events,
-                    token_budget=service.settings.query_context_token_budget,
-                )
-            except Exception as error:
-                LOGGER.warning("session context read failed: %s", type(error).__name__)
-                self.tracer.trace.context_outcome = "read_error"
-                return [], []
-            self.tracer.trace.context_event_count = len(self.session_context)
-            self.tracer.trace.context_truncated = context_truncated
-            self.tracer.trace.context_hash = context_hash
-            self.tracer.trace.context_outcome = context_outcome
-            if not self.session_context:
-                return [], []
-            if time.monotonic() >= self.deadline:
-                self.tracer.trace.context_outcome = "deadline_exhausted"
-                return [], []
-        remaining = max(0.001, self.deadline - time.monotonic())
-        result = service.query_expander.expand(
-            request.query,
-            intent=self.recall.selected_intent,
-            max_expansions=service.settings.query_expansion_max,
-            timeout_seconds=min(service.settings.query_expansion_timeout_seconds, remaining),
-            token_ceiling=service.settings.query_expansion_token_ceiling,
-            source=trigger,
-            session_context=self.session_context,
-        )
-        self.tracer.trace.expansion_total_tokens += result.input_tokens + result.output_tokens
-        if not result.expansions:
-            self.tracer.trace.expansions.append(
-                QueryExpansionTrace.from_text(
-                    "",
-                    trace_source,
-                    0.6,
-                    input_tokens=result.input_tokens,
-                    output_tokens=result.output_tokens,
-                    latency_ms=result.latency_ms,
-                    outcome=result.outcome,
-                    error_class=result.error_class,
-                    attempts=result.attempts,
-                    http_status=result.http_status,
-                    provider_code=result.provider_code,
-                )
-            )
-            return [], []
-        additions = [WeightedQuery(item.text, item.source, item.weight) for item in result.expansions]
-        for item in additions:
-            self.tracer.trace.expansions.append(
-                QueryExpansionTrace.from_text(
-                    item.text,
-                    item.source,
-                    item.weight,
-                    input_tokens=result.input_tokens,
-                    output_tokens=result.output_tokens,
-                    latency_ms=result.latency_ms,
-                )
-            )
-        return additions, [
-            embed_query(service.embedder, item.text) if service.settings.recall_dense_enabled else b""
-            for item in additions
-        ]
+    def prepare_wide_fallback(self, reason: str) -> None:
+        self._planning.prepare_wide_fallback(reason)
 
-    def _expand_for_low_recall(
-        self,
-        candidate_count: int,
-        fts_candidate_count: int,
-    ) -> tuple[list[WeightedQuery], list[bytes]]:
-        service = self.service
-        trigger = QueryExpander.trigger_for(
-            self.recall.request.query,
-            "auto",
-            candidate_count=candidate_count,
-            candidate_floor=service.settings.query_expansion_candidate_floor,
-            fts_candidate_count=fts_candidate_count,
-            context_available=service.settings.query_context_mode != "off",
-        )
-        return self.expand_for(trigger) if trigger is not None else ([], [])
+    @property
+    def entity_plan(self) -> QueryEntityPlan:
+        return self._planning.entity_plan
+
+    @property
+    def weighted_queries(self) -> list[WeightedQuery]:
+        return self._planning.weighted_queries
+
+    @property
+    def query_blobs(self) -> list[bytes]:
+        return self._planning.query_blobs
+
+    @property
+    def low_recall_expander(self) -> LowRecallExpander | None:
+        return self._planning.low_recall_expander
+
+    @property
+    def entity_fallback_reason(self) -> str | None:
+        return self._planning.entity_fallback_reason
 
 
 class RecallService:
@@ -629,7 +414,10 @@ class RecallService:
         expansion: _QueryExpansionSession,
     ) -> list[dict[str, Any]]:
         request = session.request
-        expansion_enabled = len(expansion.weighted_queries) > 1
+        planned_query_changed = expansion.weighted_queries[0].text != request.query
+        expansion_enabled = len(expansion.weighted_queries) > 1 or planned_query_changed
+        scope_mode = "wide" if expansion.entity_fallback_reason is not None else expansion.entity_plan.scope_mode
+        scope_id = None if expansion.entity_fallback_reason is not None else expansion.entity_plan.entity_id
         return hybrid_claims(
             ClaimRepository(
                 self.connection,
@@ -656,8 +444,8 @@ class RecallService:
                 dedup_candidate_limit=self.settings.recall_dedup_candidate_limit,
                 feedback_min_samples=self.settings.feedback_min_samples,
                 decay_model=self.settings.decay_model,
-                entity_constraint_mode=self.settings.entity_constraint_mode,
-                entity_filter_id=expansion.entity_plan.resolution.filter_entity_id,
+                entity_scope_mode=scope_mode,
+                entity_scope_id=scope_id,
             ),
             relation_connection=self.connection,
             relation_config=self.relation_config,
@@ -956,7 +744,15 @@ class RecallService:
         total_started = session.total_started
         expansion = self._prepare_queries(session)
 
-        selection = self._postprocess_selection(session, self._run_claim_pipeline(session, expansion))
+        try:
+            claims = self._run_claim_pipeline(session, expansion)
+        except EntityScopeFallback as fallback:
+            expansion.prepare_wide_fallback(fallback.reason)
+            try:
+                claims = self._run_claim_pipeline(session, expansion)
+            except sqlite3.Error:
+                raise fallback.original_error
+        selection = self._postprocess_selection(session, claims)
         if (
             selected_intent in {RecallIntent.TOOL, RecallIntent.PROCEDURE}
             and self.settings.procedure_recall_mode != "off"
@@ -1102,58 +898,40 @@ class RecallService:
             data["feedback_id"] = packet_item["feedback_id"]
 
     def _submit_exposures(self, query_id: str, exposures: list[tuple[Any, ...]]) -> int:
-        if self.side_effect_sink is None or not self.side_effect_sink.submit_exposures(query_id, exposures):
-            raise RuntimeError("recall exposure submission rejected")
-        return len(exposures)
+        return self._side_effect_coordinator().submit_exposures(query_id, exposures)
 
     def _submit_access(self, query_id: str, claims: list[dict[str, Any]]) -> None:
-        try:
-            claim_ids = [claim["id"] for claim in claims]
-            accessed_at = _now()
-            assert self.side_effect_sink is not None
-            if not self.side_effect_sink.submit_access(query_id, claim_ids, accessed_at):
-                raise RuntimeError("recall access submission rejected")
-        except Exception as error:
-            _record_side_effect_failure("access_record", error)
-            LOGGER.exception("recall side effect failed: access_record")
+        self._side_effect_coordinator().submit_access(query_id, claims)
 
     def _record_access(self, claims: list[dict[str, Any]]) -> None:
-        try:
-            claim_ids = [claim["id"] for claim in claims]
-            self._run_side_effect_with_retry(lambda: ClaimRepository(self.connection).record_access(claim_ids, _now()))
-        except Exception as error:
-            _record_side_effect_failure("access_record", error)
-            LOGGER.exception("recall side effect failed: access_record")
-            self._emit_failure("access_record", "access_record_failed", error, len(claims))
+        self._side_effect_coordinator().record_access(claims)
 
     def _run_side_effect_with_retry(self, operation: Any) -> Any:
-        """仅对 SQLite busy/locked 做 Settings 控制的有限退避重试。"""
-        attempts = self.settings.recall_side_effect_max_attempts
-        for attempt in range(attempts):
-            try:
-                return operation()
-            except sqlite3.OperationalError as error:
-                busy = "busy" in str(error).lower() or "locked" in str(error).lower()
-                if not busy or attempt + 1 >= attempts:
-                    raise
-                time.sleep(self.settings.recall_side_effect_backoff_seconds * (attempt + 1))
-        raise RuntimeError("unreachable recall side-effect retry state")
+        return self._side_effect_coordinator().run_with_retry(lambda _connection: operation())
+
+    def _side_effect_coordinator(self) -> RecallSideEffectCoordinator:
+        return RecallSideEffectCoordinator(
+            self.connection,
+            self.settings,
+            self.side_effect_sink,
+            now=_now,
+            sleep=time.sleep,
+            audit_provider=current_audit,
+            failure_recorder=_record_side_effect_failure,
+            logger=LOGGER,
+        )
 
     @staticmethod
     def _emit_failure(operation: str, outcome: str, error: Exception, claim_count: int) -> None:
-        try:
-            current_audit().emit(
-                "recall",
-                operation,
-                outcome,
-                detail={
-                    "error_class": type(error).__name__,
-                    "claim_count": claim_count,
-                },
-            )
-        except Exception as audit_error:
-            _record_side_effect_failure("audit_emit", audit_error)
-            LOGGER.exception("recall failure audit emission failed")
+        emit_recall_failure(
+            operation,
+            outcome,
+            error,
+            claim_count,
+            audit_provider=current_audit,
+            failure_recorder=_record_side_effect_failure,
+            logger=LOGGER,
+        )
 
     def _assemble_results(
         self,

@@ -13,7 +13,7 @@ provider = "dashscope"
 base_url = "https://coding.dashscope.aliyuncs.com/v1"
 model = "qwen3.7-plus"
 structured_mode = "json_object"
-timeout = 90
+timeout = 240
 max_attempts = 3
 
 [embedding]
@@ -56,8 +56,8 @@ text_version = "v2"
 default_limit = 5
 vector_scan_limit = 200
 dense_enabled = true
-# E4 行为门禁通过但证据等级不足；只跑 shadow，不在 RRF 前硬过滤。
-entity_constraint_mode = "observe"
+# 高置信实体范围在候选截断前生效；不确定情况自动回退宽召回。
+entity_constraint_mode = "enforce"
 dedup_threshold = 0.95
 dedup_candidate_limit = 100
 # 自动复活会改变可见状态，必须显式启用。
@@ -129,6 +129,13 @@ conflict_failure_backoff_seconds = 300
 conflict_writer_yield_ms = 5
 conflict_auto_resolve_max_candidates = 8
 
+[usage]
+daily_request_limit = 0
+daily_cost_limit_microunits = 0
+reservation_lease_seconds = 300
+# 可选：相对 hl_mem.toml 所在目录的宿主价格表；格式见 docs/usage-pricing.schema.json。
+# price_book_path = "config/provider-pricing.json"
+
 [conflict]
 # 只执行确定性 L0；未命中规则的灰区案进入 manual_required。
 auto_mode = "l0_only"
@@ -148,6 +155,9 @@ latest_wins_slots = ["config.version"]
 
 [relation]
 discovery_mode = "off"
+
+[provenance]
+mode = "enforce"
 
 [plugins]
 enabled = []

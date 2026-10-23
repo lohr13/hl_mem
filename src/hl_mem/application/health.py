@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import TypedDict
 
+from hl_mem.errors import OpsReportError
 from hl_mem.monitoring.metrics import (
     DEFAULT_ADMISSION_METRICS,
     DEFAULT_PROVIDER_METRICS,
@@ -24,6 +25,20 @@ from hl_mem.recall.freshness_annotation import (
     FreshnessAnnotationMode,
 )
 from hl_mem.recall.injection import injection_governance_snapshot
+
+
+def provider_usage_snapshot(runtime: object | None) -> dict[str, object] | None:
+    """Keep the detailed usage counters and attach only today's cheap health aggregate."""
+    if runtime is None:
+        return None
+    usage_snapshot = getattr(runtime, "usage_snapshot")()
+    if usage_snapshot is None:
+        return None
+    try:
+        health = getattr(runtime, "usage_health_snapshot")()
+    except OpsReportError:
+        health = None
+    return {**usage_snapshot, "health": health}
 
 
 class ConflictBacklogSnapshot(TypedDict):
