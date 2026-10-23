@@ -14,16 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from hl_mem import __version__
+from hl_mem import __version__, model_coordinate_repair_cli
 from hl_mem.adapters.hermes.deployment import deploy_plugin, print_deployment_result
-from hl_mem.application.conflict_backlog import (
-    inspect_invalid_conflict_groups,
-)
-from hl_mem.application.conflict_backlog import repair_invalid_conflict_groups as apply_invalid_group_repair
-from hl_mem.application.conflict_repairs import (
-    inspect_dangling_conflicts,
-)
-from hl_mem.application.conflict_repairs import repair_dangling_conflicts as apply_dangling_conflict_repair
+from hl_mem.application import conflict_backlog, conflict_repairs
 from hl_mem.application.conflicts import DEFAULT_HUMAN_RESOLVER, ResolutionService
 from hl_mem.application.dedup_backlog import (
     drain_below_floor_pairs,
@@ -32,6 +25,7 @@ from hl_mem.application.dedup_backlog import (
 from hl_mem.application.expired_cleanup import cleanup_expired_claims, inspect_expired_claims
 from hl_mem.application.restore import restore_database
 from hl_mem.application.version_report import report_version_cli
+from hl_mem.claim_explain_cli import add_claim_explain_command, handle_claim_explain_command
 from hl_mem.components import make_embedder
 from hl_mem.config.cli import add_config_command, handle_config_command
 from hl_mem.config_loader import load_settings
@@ -39,6 +33,7 @@ from hl_mem.daily_cli import add_daily_commands, handle_daily_command
 from hl_mem.doctor import add_doctor_command, handle_doctor_command
 from hl_mem.errors import ConflictError
 from hl_mem.evaluation.runner import BenchmarkRunner
+from hl_mem.observability.ops_cli import add_ops_command, handle_ops_command, open_readonly_database
 from hl_mem.settings import Settings
 from hl_mem.storage.backup import backup_database, validate_backup
 from hl_mem.storage.claims import ClaimRepository
@@ -67,6 +62,8 @@ EVENT_ARCHIVE_COLUMNS = (
     "content_hash",
     "sensitivity",
     "metadata_json",
+    "origin_class",
+    "session_kind",
 )
 
 
@@ -101,6 +98,8 @@ def _normalized_archive_event(event: dict[str, Any]) -> dict[str, Any]:
     defaults = {
         "tenant_id": "default",
         "sensitivity": "normal",
+        "origin_class": "unknown",
+        "session_kind": "unknown",
     }
     return {column: stored[column] if column in stored else defaults.get(column) for column in EVENT_ARCHIVE_COLUMNS}
 
@@ -115,13 +114,6 @@ def _archive_event_matches_existing(connection: sqlite3.Connection, event: dict[
         return False
     expected = _normalized_archive_event(event)
     return all(existing[column] == expected[column] for column in EVENT_ARCHIVE_COLUMNS)
-
-
-def _open_readonly_database(database_path: Path) -> sqlite3.Connection:
-    """以 SQLite 强制只读模式打开现有数据库，且不运行 migration。"""
-    connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    return connection
 
 
 def export_database(
@@ -353,9 +345,9 @@ def repair_dangling_conflicts(
     database = Database(database_path, settings=settings)
     try:
         connection = database.open()
-        cases = inspect_dangling_conflicts(connection)
+        cases = conflict_repairs.inspect_dangling_conflicts(connection)
         if apply:
-            applied = apply_dangling_conflict_repair(connection, source="cli")
+            applied = conflict_repairs.repair_dangling_conflicts(connection, source="cli")
         else:
             applied = {"deleted_count": 0, "deleted_case_ids": []}
         return {"dry_run": not apply, "cases": cases, **applied}
@@ -374,7 +366,7 @@ def repair_invalid_conflict_groups(
     database = Database(database_path, settings=settings)
     try:
         connection = database.open()
-        preview = inspect_invalid_conflict_groups(connection)
+        preview = conflict_backlog.inspect_invalid_conflict_groups(connection)
         actual_count = int(preview["candidate_case_count"])
         if expected_count is not None and actual_count != expected_count:
             raise ConflictError(
@@ -390,7 +382,7 @@ def repair_invalid_conflict_groups(
             }
         if expected_count is None:
             raise ConflictError("--expected-count is required with --apply")
-        return apply_invalid_group_repair(
+        return conflict_backlog.repair_invalid_conflict_groups(
             connection,
             expected_count=expected_count,
             source="cli",
@@ -412,7 +404,7 @@ def drain_dedup_backlog(
     if apply and expected_count is None:
         raise ConflictError("--expected-count is required with --apply")
     if not apply:
-        connection = _open_readonly_database(Path(database_path))
+        connection = open_readonly_database(Path(database_path))
         try:
             preview = inspect_below_floor_pairs(connection, threshold=threshold)
         finally:
@@ -459,7 +451,7 @@ def cleanup_expired_history(
     if apply and expected_count is None:
         raise ConflictError("--expected-count is required with --apply")
     if not apply:
-        connection = _open_readonly_database(Path(database_path))
+        connection = open_readonly_database(Path(database_path))
         try:
             preview = inspect_expired_claims(
                 connection,
@@ -545,6 +537,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     restore.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     restore.add_argument("--confirm-overwrite", action="store_true")
     _add_conflicts_parser(commands)
+    add_claim_explain_command(commands)
+    model_coordinate_repair_cli.add_model_coordinate_repair_command(commands)
     dedup = commands.add_parser("dedup")
     dedup.add_argument("--db", type=Path, default=argparse.SUPPRESS)
     dedup_commands = dedup.add_subparsers(dest="dedup_command", required=True)
@@ -579,6 +573,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     backfill.add_argument("--dry-run", action="store_true")
     backfill.add_argument("--cursor")
     backfill.add_argument("--mode", choices=("legacy", "value_only", "natural", "answerable"))
+    add_ops_command(commands)
     add_doctor_command(commands)
     add_config_command(commands)
     hermes = commands.add_parser("hermes", help="安装或升级 Hermes 插件")
@@ -615,6 +610,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     settings = load_settings(args.config, args.env_file)
     if args.db is not None:
         settings = replace(settings, database_path=str(args.db))
+    if handle_ops_command(args, settings, parser):
+        return
+    if model_coordinate_repair_cli.handle_model_coordinate_repair_command(args, settings):
+        return
     if args.command == "report-version":
         return print(report_version_cli(settings, args.namespace, args.subject))
     if args.command == "server":
@@ -625,6 +624,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_server(settings, host=args.host, port=args.port)
         return
     database_path = Path(settings.database_path)
+    if handle_claim_explain_command(args, settings):
+        return
     if args.command == "backup":
         manifest = backup_database(database_path, args.path)
         print(json.dumps(validate_backup(args.path, manifest), ensure_ascii=False, sort_keys=True))
@@ -643,7 +644,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         connection: sqlite3.Connection | None = None
         try:
             if args.dry_run:
-                connection = _open_readonly_database(database_path)
+                connection = open_readonly_database(database_path)
             else:
                 database = Database(settings=settings)
                 connection = database.open()

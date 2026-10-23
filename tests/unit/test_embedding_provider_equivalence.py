@@ -10,8 +10,9 @@ import httpx
 import pytest
 
 from hl_mem.components import create_provider_runtime, make_embedder
-from hl_mem.errors import ProviderCallError
+from hl_mem.errors import ProviderCallError, UsageLimitExceededError
 from hl_mem.settings import Settings
+from tests.unit._usage_pricing_fixture import write_usage_price_book
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "providers" / "embedding_dashscope.json"
 
@@ -158,6 +159,65 @@ def test_embedding_transport_preserves_connect_and_read_timeouts(tmp_path: Path)
         make_embedder(settings, runtime=runtime).embed_one("first")
         assert observed["connect"] == 1.25
         assert observed["read"] == 9.5
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_token_priced_embedding_reservation_fails_closed_before_network(tmp_path: Path) -> None:
+    called = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, request=request, json={})
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="embedding",
+        provider="dashscope",
+        model="text-embedding-v4",
+        million_input_tokens=1,
+    )
+    settings = _settings(
+        tmp_path,
+        usage_price_book_path=str(price_book),
+        usage_daily_cost_limit_microunits=1,
+    )
+    http_client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=http_client)
+    try:
+        with pytest.raises(UsageLimitExceededError, match="cost"):
+            make_embedder(settings, runtime=runtime).embed_one("first")
+        assert not called
+    finally:
+        runtime.close()
+        http_client.close()
+
+
+def test_token_priced_embedding_missing_usage_settles_unknown_cost(tmp_path: Path) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]},
+        )
+
+    price_book = write_usage_price_book(
+        tmp_path / "prices.json",
+        capability="embedding",
+        provider="dashscope",
+        model="text-embedding-v4",
+        million_input_tokens=1,
+    )
+    settings = _settings(tmp_path, usage_price_book_path=str(price_book))
+    http_client = httpx.Client(transport=httpx.MockTransport(handle))
+    runtime = create_provider_runtime(settings, client=http_client)
+    try:
+        make_embedder(settings, runtime=runtime).embed_one("first")
+        snapshot = runtime.governor.snapshot()
+        assert snapshot["settled"]["cost_microunits"] is None
+        assert snapshot["unknown_cost_count"] == 1
     finally:
         runtime.close()
         http_client.close()

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
 import threading
 import uuid
 from collections import deque
@@ -18,7 +16,14 @@ import httpx
 from hl_mem.adapters.hermes.conflict_notice import ManualConflictNotice
 from hl_mem.adapters.hermes.episode_mapper import EpisodeMapper
 from hl_mem.adapters.hermes.http_client import HLMemHttpClient
+from hl_mem.adapters.hermes.payloads import (
+    episode_goal,
+    memory_idempotency_key,
+    summarize_observation,
+    trusted_namespace,
+)
 from hl_mem.adapters.hermes.prefetch import PrefetchCache
+from hl_mem.adapters.hermes.provenance import derive_turn_provenance, messages_after_latest_user
 from hl_mem.adapters.hermes.renderer import render_context
 from hl_mem.application.context_packet import (
     RetrievalBundle,
@@ -33,10 +38,7 @@ from hl_mem.settings import Settings
 logger = logging.getLogger(__name__)
 
 MAX_TRACE_ACTION_LENGTH = 10_000
-MAX_TRACE_OBSERVATION_SUMMARY_LENGTH = 500
-MAX_EPISODE_GOAL_LENGTH = 5_000
 MAX_EPISODE_ERROR_BODY_LENGTH = 1_000
-EPISODE_GOAL_FALLBACK = "Complete tool-assisted task"
 MAX_DELIVERY_RECEIPTS = 128
 MAX_INJECTION_ATTEMPTS = 3
 HERMES_RECALL_TOOL_NAME = "hl_mem_recall"
@@ -50,14 +52,6 @@ HERMES_RECALL_TOOL_DESCRIPTION = (
     "known environment facts; when prior decisions or rationale are needed. Skip when memories already injected into "
     "the current conversation are sufficient."
 )
-_ERROR_PATTERNS = (
-    re.compile(r"^Traceback", re.MULTILINE),
-    re.compile(r"^Error:", re.MULTILINE),
-    re.compile(r"^FAILED\b", re.MULTILINE),
-    re.compile(r"\bException\b"),
-    re.compile(r"\b(?:[A-Za-z_]\w*)?Error\b(?:[ \t]+[^:\r\n]+)?:"),
-)
-_EXIT_CODE_PATTERN = re.compile(r'["\']?exit_code["\']?\s*[:=]\s*(-?\d+)')
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,13 +72,7 @@ class _PendingInjection:
 
 def _summarize_observation(raw: str) -> str:
     """生成结构化摘要替代完整原文。"""
-    if not raw:
-        return ""
-    exit_codes = (int(match.group(1)) for match in _EXIT_CODE_PATTERN.finditer(raw))
-    is_error = any(pattern.search(raw) for pattern in _ERROR_PATTERNS) or any(code != 0 for code in exit_codes)
-    status = "error" if is_error else "success"
-    summary = raw[:MAX_TRACE_OBSERVATION_SUMMARY_LENGTH].strip()
-    return f"[{status}] {summary}"
+    return summarize_observation(raw)
 
 
 def _memory_idempotency_key(
@@ -94,36 +82,22 @@ def _memory_idempotency_key(
     namespace: str = "default",
 ) -> str:
     """从 Hermes host identity 与正文摘要生成稳定、无正文的重试键。"""
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    identity = json.dumps(
-        [namespace, key, target, content_hash],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return f"hermes-memory:{hashlib.sha256(identity.encode('utf-8')).hexdigest()}"
+    return memory_idempotency_key(key, target, content, namespace)
 
 
 def _trusted_namespace(namespace: str) -> str:
     """Validate a namespace supplied by trusted host configuration or hook arguments."""
-    if not isinstance(namespace, str) or not namespace:
-        raise ValueError("namespace must be a non-empty string")
-    if len(namespace) > 100:
-        raise ValueError("namespace must be at most 100 characters")
-    return namespace
+    return trusted_namespace(namespace)
 
 
 def _episode_goal(content: str) -> str:
     """把本轮 user content 收敛到 EpisodeInput 契约。"""
-    return (content.strip() or EPISODE_GOAL_FALLBACK)[:MAX_EPISODE_GOAL_LENGTH]
+    return episode_goal(content)
 
 
 def _messages_after_last_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """只保留本轮最后一条 user 消息之后的轨迹。"""
-    last_user_index = next(
-        (index for index in range(len(messages) - 1, -1, -1) if messages[index].get("role") == "user"),
-        None,
-    )
-    return messages if last_user_index is None else messages[last_user_index + 1 :]
+    return list(messages_after_latest_user(messages))
 
 
 def _validation_response_body(response: httpx.Response) -> str:
@@ -171,6 +145,8 @@ class HLMemProvider:
         self._mapper = EpisodeMapper()
         self._session_id = ""
         self._hermes_home = hermes_home or resolved_settings.hermes_home or ""
+        self._platform: str | None = None
+        self._agent_context: str | None = None
         self._delivery_lock = threading.Lock()
         self._delivery_receipts: deque[DeliveryReceipt] = deque(maxlen=MAX_DELIVERY_RECEIPTS)
         self._pending_injections: deque[_PendingInjection] = deque()
@@ -354,6 +330,10 @@ class HLMemProvider:
         if session_id is not None:
             self._session_id = session_id
             self._hermes_home = str(kwargs.get("hermes_home") or self._hermes_home)
+            platform = kwargs.get("platform")
+            agent_context = kwargs.get("agent_context")
+            self._platform = platform if isinstance(platform, str) else None
+            self._agent_context = agent_context if isinstance(agent_context, str) else None
             return
         if not self._can_call():
             return
@@ -410,6 +390,17 @@ class HLMemProvider:
         self._session_id = active_session
         try:
             turn_id = str(kwargs.get("turn_id") or uuid.uuid4().hex)
+            messages = kwargs.get("messages")
+            turn_provenance = derive_turn_provenance(
+                messages if isinstance(messages, list) else [],
+                platform=self._platform,
+                agent_context=self._agent_context,
+            )
+            assistant_metadata: dict[str, Any] = {"turn_id": turn_id}
+            if turn_provenance.session_kind == "cron":
+                assistant_metadata["memory_disposition"] = "exclude"
+            if turn_provenance.external_tools:
+                assistant_metadata["external_source_tools"] = list(turn_provenance.external_tools)
             events = [
                 self._hermes_event_payload(
                     "user",
@@ -417,13 +408,17 @@ class HLMemProvider:
                     namespace=namespace,
                     metadata={"turn_id": turn_id},
                     idempotency_key=f"hermes-turn:{active_session}:{turn_id}:user",
+                    origin_class=turn_provenance.user_origin,
+                    session_kind=turn_provenance.session_kind,
                 ),
                 self._hermes_event_payload(
                     "assistant",
                     assistant_content or "",
                     namespace=namespace,
-                    metadata={"turn_id": turn_id},
+                    metadata=assistant_metadata,
                     idempotency_key=f"hermes-turn:{active_session}:{turn_id}:assistant",
+                    origin_class=turn_provenance.assistant_origin,
+                    session_kind=turn_provenance.session_kind,
                 ),
             ]
             if self._sync_post("/v1/events/batch", {"events": events}):
@@ -1045,6 +1040,8 @@ class HLMemProvider:
         namespace: str = "default",
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        origin_class: str = "unknown",
+        session_kind: str = "unknown",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_type": "message",
@@ -1052,6 +1049,8 @@ class HLMemProvider:
             "content": {"text": content},
             "session_id": self._session_id or None,
             "namespace": _trusted_namespace(namespace),
+            "origin_class": origin_class,
+            "session_kind": session_kind,
         }
         if qualifiers:
             payload["content"]["qualifiers"] = qualifiers

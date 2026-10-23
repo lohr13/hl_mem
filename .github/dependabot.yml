@@ -1,6 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
@@ -11,3 +11,20 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Keep workflow actions pinned to full 40-character commit SHAs.
+    groups:
+      codeql-minor-patch:
+        patterns:
+          - "github/codeql-action/*"
+        update-types:
+          - minor
+          - patch
+      actions-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github/codeql-action/*"
+        update-types:
+          - minor
+          - patch
+    # Major updates remain individual PRs for explicit compatibility review.

@@ -12,6 +12,8 @@ import pytest
 
 import hl_mem.cli as cli_module
 import hl_mem.doctor as doctor_module
+import hl_mem.observability.provider_diagnostics as provider_diagnostics
+from hl_mem.adapters.hermes.runtime_status import RuntimeIdentity, runtime_status_path, write_runtime_status
 from hl_mem.compatibility import (
     CONTEXT_PACKET_SCHEMA_MAJOR,
     CONTEXT_PACKET_SCHEMA_MINOR,
@@ -24,6 +26,7 @@ from hl_mem.doctor import (
     DaemonProbe,
     _check_daemon_compatibility,
     _check_hermes,
+    _check_hermes_runtime,
     _check_plugin_compatibility,
     _check_provider_plugins,
     _check_usage_ledger,
@@ -69,7 +72,7 @@ def _disable_network_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_module,
         "probe_model_components",
-        lambda _settings: [
+        lambda _settings, **_kwargs: [
             CheckResult(CheckStatus.OK, "LLM API", "verified"),
             CheckResult(CheckStatus.OK, "Embedding API", "verified"),
         ],
@@ -84,6 +87,16 @@ def _disable_network_probes(monkeypatch: pytest.MonkeyPatch) -> None:
         doctor_module,
         "_check_plugin_compatibility",
         lambda _settings: CheckResult(CheckStatus.WARN, "Hermes 插件兼容性", "not installed"),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "_check_hermes_runtime",
+        lambda _settings: CheckResult(
+            CheckStatus.WARN,
+            "Hermes loaded runtime",
+            "not installed",
+            code="hermes_runtime",
+        ),
     )
 
 
@@ -122,7 +135,7 @@ def test_doctor_runs_without_crashing(tmp_path: Path, monkeypatch) -> None:
         env_path=env_path,
         environ={},
     )
-    assert len(results) == 18
+    assert len(results) == 19
 
 
 def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
@@ -131,14 +144,14 @@ def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
 ) -> None:
     settings = replace(Settings.for_test(), database_path=str(tmp_path / "memory.db"))
     calls = 0
-    original = doctor_module.components.make_provider_registry
+    original = provider_diagnostics.components.make_provider_registry
 
     def registry(_settings):
         nonlocal calls
         calls += 1
         return original(Settings.for_test(), entry_points=())
 
-    monkeypatch.setattr(doctor_module.components, "make_provider_registry", registry)
+    monkeypatch.setattr(provider_diagnostics.components, "make_provider_registry", registry)
     results = _check_provider_plugins(settings)
 
     assert calls == 1
@@ -147,6 +160,44 @@ def test_provider_doctor_reports_resolution_and_trust_without_disabled_imports(
         ("provider_trust", CheckStatus.OK),
     ]
     assert "dashscope" in results[0].detail
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "error_type"),
+    (
+        ("build", OSError),
+        ("build", ConfigurationError),
+        ("health", RuntimeError),
+    ),
+)
+def test_provider_doctor_normalizes_registry_failures_without_disclosure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+    error_type: type[Exception],
+) -> None:
+    sensitive = str(tmp_path / "private-provider-secret.txt")
+
+    class BrokenRegistry:
+        def health_snapshot(self) -> object:
+            raise error_type(sensitive)
+
+    def registry(_settings: Settings) -> object:
+        if failure_stage == "build":
+            raise error_type(sensitive)
+        return BrokenRegistry()
+
+    monkeypatch.setattr(provider_diagnostics.components, "make_provider_registry", registry)
+
+    results = _check_provider_plugins(Settings.for_test())
+
+    assert [(item.code, item.status) for item in results] == [
+        ("provider_plugins", CheckStatus.FAIL),
+        ("provider_trust", CheckStatus.OK),
+    ]
+    assert results[0].detail == "Provider registry check failed"
+    serialized = json.dumps([item.to_dict() for item in results], ensure_ascii=False)
+    assert sensitive not in serialized
 
 
 def test_usage_ledger_doctor_is_read_only_and_previews_expired_recovery(tmp_path: Path) -> None:
@@ -172,6 +223,58 @@ def test_usage_ledger_doctor_is_read_only_and_previews_expired_recovery(tmp_path
     with sqlite3.connect(ledger_path) as connection:
         assert connection.execute("SELECT count(*) FROM usage_events").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM usage_reservations WHERE state='active'").fetchone()[0] == 2
+
+
+def test_usage_price_book_doctor_validates_configured_book_without_disclosing_provenance(tmp_path: Path) -> None:
+    check = getattr(doctor_module, "_check_usage_price_book", None)
+    assert callable(check), "doctor does not validate configured usage price books"
+    source_url = "https://pricing.example.test/private-source"
+    price_path = tmp_path / "private-pricing.json"
+    price_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-09-01",
+                "source_urls": [source_url],
+                "rules": [
+                    {
+                        "capability": "llm",
+                        "model": "qwen",
+                        "rates_microunits": {
+                            "request": 0,
+                            "million_input_tokens": 0,
+                            "million_output_tokens": 0,
+                            "embedding_item": 0,
+                            "rerank_document": 0,
+                            "image": 0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    configured = replace(Settings.for_test(), usage_price_book_path=str(price_path))
+
+    valid = check(configured)
+    missing = check(replace(configured, usage_price_book_path=str(tmp_path / "missing.json")))
+
+    assert valid is not None
+    assert (valid.code, valid.status) == ("usage_price_book", CheckStatus.OK)
+    assert "configured=true" in valid.detail
+    assert "fingerprint=" in valid.detail
+    assert missing is not None
+    assert (missing.code, missing.status) == ("usage_price_book", CheckStatus.FAIL)
+    rendered = repr((valid.to_dict(), missing.to_dict()))
+    assert str(tmp_path) not in rendered
+    assert source_url not in rendered
+
+
+def test_usage_price_book_doctor_is_absent_when_not_configured() -> None:
+    check = getattr(doctor_module, "_check_usage_price_book", None)
+    assert callable(check), "doctor does not validate configured usage price books"
+    assert check(Settings.for_test()) is None
 
 
 def test_invalid_config_is_a_structured_failure(tmp_path: Path) -> None:
@@ -382,19 +485,19 @@ def test_placeholder_secret_detection() -> None:
 
 def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        doctor_module,
-        "_check_llm",
-        lambda _settings: CheckResult(CheckStatus.OK, "LLM API", "ok"),
+        provider_diagnostics,
+        "check_llm",
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "LLM API", "ok"),
     )
     monkeypatch.setattr(
-        doctor_module,
-        "_check_embedding",
-        lambda _settings: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+        provider_diagnostics,
+        "check_embedding",
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
     )
     monkeypatch.setattr(
-        doctor_module,
-        "_check_reranker",
-        lambda _settings: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
+        provider_diagnostics,
+        "check_reranker",
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Reranker API", "ok"),
     )
 
     without_reranker = probe_model_components(Settings.for_test())
@@ -402,6 +505,272 @@ def test_model_probe_includes_only_enabled_model_paths(monkeypatch: pytest.Monke
 
     assert [item.name for item in without_reranker] == ["LLM API", "Embedding API"]
     assert [item.name for item in with_reranker] == ["LLM API", "Embedding API", "Reranker API"]
+
+
+def test_model_probe_uses_a_bounded_minimal_json_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class ProbeRuntime:
+        def close(self) -> None:
+            captured["runtime_closed"] = True
+
+    class ProbeClient:
+        def complete(self, request, *, timeout_seconds=None):
+            captured["request"] = request
+            captured["timeout_seconds"] = timeout_seconds
+
+        def close(self) -> None:
+            captured["client_closed"] = True
+
+    def create_runtime(settings: Settings, **_kwargs: object) -> ProbeRuntime:
+        captured["max_tokens"] = settings.llm_max_tokens
+        return ProbeRuntime()
+
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", create_runtime)
+    monkeypatch.setattr(provider_diagnostics.components, "make_llm_client", lambda *_args, **_kwargs: ProbeClient())
+    monkeypatch.setattr(
+        provider_diagnostics,
+        "check_embedding",
+        lambda _settings, runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+    )
+
+    results = probe_model_components(
+        Settings(
+            extractor_mode="llm",
+            llm_api_key="live-llm-key",
+            embedder_mode="fake",
+            reranker_mode="off",
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, provider_diagnostics.LLMRequest)
+    assert captured["max_tokens"] == 64
+    assert request.structured_output is None
+    assert len(request.messages) == 1
+    assert "JSON" in request.messages[0].content
+    assert "{}" in request.messages[0].content
+    assert [item.status for item in results] == [CheckStatus.OK, CheckStatus.OK]
+    assert captured["client_closed"] is True
+    assert captured["runtime_closed"] is True
+
+
+def test_run_doctor_loads_one_price_book_and_shares_one_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hl_mem.observability.pricing import UsagePriceBook
+
+    config = _production_config(tmp_path / "config.toml")
+    price_path = tmp_path / "prices.json"
+    price_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "currency": "CNY",
+                "effective_date": "2026-08-31",
+                "rules": [
+                    {
+                        "capability": "llm",
+                        "provider": "openai_compatible",
+                        "model": "quality-llm",
+                        "rates_microunits": {
+                            "request": 1,
+                            "million_input_tokens": 0,
+                            "million_output_tokens": 0,
+                            "embedding_item": 0,
+                            "rerank_document": 0,
+                            "image": 0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{price_path.as_posix()}"\n')
+
+    original_load = UsagePriceBook.load.__func__
+    load_count = 0
+
+    def counting_load(cls: type[UsagePriceBook], path: Path) -> UsagePriceBook:
+        nonlocal load_count
+        load_count += 1
+        return original_load(cls, path)
+
+    runtimes: list[object] = []
+    runtime_fingerprints: list[object] = []
+    runtime_clients: list[object] = []
+
+    def checked(_settings: Settings, runtime=None) -> CheckResult:
+        assert runtime is not None
+        runtimes.append(runtime)
+        runtime_fingerprints.append(runtime.usage_snapshot()["price_book_fingerprint"])
+        runtime_clients.append(runtime._client)
+        return CheckResult(CheckStatus.OK, "model", "ok")
+
+    monkeypatch.setattr(UsagePriceBook, "load", classmethod(counting_load))
+    monkeypatch.setattr(provider_diagnostics, "check_llm", checked)
+    monkeypatch.setattr(provider_diagnostics, "check_embedding", checked)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    price_check = next(result for result in results if result.code == "usage_price_book")
+    assert load_count == 1
+    assert len(runtimes) == 2 and runtimes[0] is runtimes[1]
+    assert len(set(runtime_fingerprints)) == 1
+    assert runtime_fingerprints[0] in price_check.detail
+    assert len(set(map(id, runtime_clients))) == 1
+    assert runtime_clients[0].is_closed
+
+
+def test_run_doctor_invalid_price_book_skips_all_model_probes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    missing = tmp_path / "missing-prices.json"
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{missing.as_posix()}"\n')
+    runtime_calls = 0
+    daemon_calls = 0
+    port_calls = 0
+
+    def unexpected_runtime(*_args: object, **_kwargs: object) -> object:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        raise AssertionError("invalid price book reached model runtime construction")
+
+    def unexpected_daemon(_settings: Settings) -> DaemonProbe:
+        nonlocal daemon_calls
+        daemon_calls += 1
+        return DaemonProbe(None, "invalid price book reached daemon network probe")
+
+    def unexpected_port() -> CheckResult:
+        nonlocal port_calls
+        port_calls += 1
+        return CheckResult(CheckStatus.WARN, "服务端口", "invalid price book reached port probe")
+
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", unexpected_runtime)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", unexpected_daemon)
+    monkeypatch.setattr(doctor_module, "_check_port", unexpected_port)
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    price_check = next(result for result in results if result.code == "usage_price_book")
+    assert runtime_calls == 0
+    assert daemon_calls == 0
+    assert port_calls == 0
+    assert price_check.status is CheckStatus.FAIL
+    assert str(missing) not in price_check.detail
+
+
+@pytest.mark.parametrize(
+    ("reranker_enabled", "expected_codes"),
+    (
+        (False, ["llm", "embedding"]),
+        (True, ["llm", "embedding", "reranker"]),
+    ),
+)
+def test_invalid_price_book_preserves_enabled_model_check_codes_without_probing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reranker_enabled: bool,
+    expected_codes: list[str],
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    missing = tmp_path / "sensitive-missing-prices.json"
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write(f'\n[usage]\nprice_book_path = "{missing.as_posix()}"\n')
+        if reranker_enabled:
+            stream.write('\n[reranker]\nmode = "real"\n')
+    probe_calls = {"llm": 0, "embedding": 0, "reranker": 0}
+
+    def checked(code: str):
+        def unexpected(_settings: Settings, _runtime=None) -> CheckResult:
+            probe_calls[code] += 1
+            return CheckResult(CheckStatus.OK, code, "unexpected")
+
+        return unexpected
+
+    monkeypatch.setattr(provider_diagnostics, "check_llm", checked("llm"))
+    monkeypatch.setattr(provider_diagnostics, "check_embedding", checked("embedding"))
+    monkeypatch.setattr(provider_diagnostics, "check_reranker", checked("reranker"))
+
+    environment = {"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"}
+    if reranker_enabled:
+        environment["RERANKER_API_KEY"] = "live-reranker"
+    results = run_doctor(config_path=config, environ=environment)
+
+    model_results = [result for result in results if result.code in {"llm", "embedding", "reranker"}]
+    assert [result.code for result in model_results] == expected_codes
+    assert all(result.status is CheckStatus.FAIL for result in model_results)
+    assert {result.detail for result in model_results} == {"model probe skipped because usage pricing is unavailable"}
+    assert probe_calls == {"llm": 0, "embedding": 0, "reranker": 0}
+    assert str(missing) not in json.dumps([result.to_dict() for result in results], ensure_ascii=False)
+
+
+def test_run_doctor_runtime_factory_failure_becomes_safe_model_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    secret_detail = str(tmp_path / "private-plugin.py")
+
+    def fail_runtime(*_args: object, **_kwargs: object) -> object:
+        raise ConfigurationError(secret_detail)
+
+    monkeypatch.setattr(provider_diagnostics.components, "create_provider_runtime", fail_runtime)
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    model_failure = next(result for result in results if result.code == "model_runtime")
+    assert model_failure.status is CheckStatus.FAIL
+    assert model_failure.detail == "initialization failed"
+    assert secret_detail not in repr(results)
+
+
+@pytest.mark.parametrize("error_type", (OSError, RuntimeError))
+def test_run_doctor_plugin_adapter_failure_becomes_safe_model_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    config = _production_config(tmp_path / "config.toml")
+    secret_detail = str(tmp_path / "private-adapter.py")
+
+    def fail_adapter(*_args: object, **_kwargs: object) -> object:
+        raise error_type(secret_detail)
+
+    monkeypatch.setattr(provider_diagnostics.components, "make_llm_client", fail_adapter)
+    monkeypatch.setattr(
+        provider_diagnostics,
+        "check_embedding",
+        lambda _settings, _runtime=None: CheckResult(CheckStatus.OK, "Embedding API", "ok"),
+    )
+    monkeypatch.setattr(doctor_module, "_probe_daemon", lambda _settings: DaemonProbe(None, "offline"))
+
+    results = run_doctor(
+        config_path=config,
+        environ={"LLM_API_KEY": "live-llm", "EMBEDDING_API_KEY": "live-embedding"},
+    )
+
+    llm_failure = next(result for result in results if result.code == "llm")
+    assert llm_failure.status is CheckStatus.FAIL
+    assert llm_failure.detail == "minimal request failed"
+    assert secret_detail not in repr(results)
 
 
 def test_migration_count_matches_database(tmp_path: Path) -> None:
@@ -512,3 +881,60 @@ def test_hermes_check_reports_plugin_drift(tmp_path: Path) -> None:
         "Hermes 插件",
         "检测到插件副本漂移，运行 hl-mem hermes upgrade",
     )
+
+
+def test_hermes_runtime_check_warns_without_loaded_runtime_evidence(
+    tmp_path: Path,
+) -> None:
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.WARN
+    assert result.code == "hermes_runtime"
+    assert "restart" in result.detail.lower()
+
+
+def test_hermes_runtime_check_accepts_matching_loaded_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = RuntimeIdentity("1.1.0", str((tmp_path / "package").resolve()), "a" * 40)
+    write_runtime_status(tmp_path, identity, status="registered")
+    monkeypatch.setattr(doctor_module, "capture_runtime_identity", lambda: identity)
+
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.OK
+    assert "1.1.0" in result.detail
+
+
+@pytest.mark.parametrize("failure", ["identity", "registration", "malformed"])
+def test_hermes_runtime_check_fails_closed_with_restart_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    current = RuntimeIdentity("1.1.0", str((tmp_path / "package").resolve()), "a" * 40)
+    if failure == "identity":
+        write_runtime_status(
+            tmp_path,
+            RuntimeIdentity("1.0.0", current.package_path, "b" * 40),
+            status="registered",
+        )
+    elif failure == "registration":
+        write_runtime_status(
+            tmp_path,
+            current,
+            status="registration_failed",
+            exception_type="RuntimeError",
+        )
+    else:
+        path = runtime_status_path(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text('{"secret": "must-not-surface"}', encoding="utf-8")
+    monkeypatch.setattr(doctor_module, "capture_runtime_identity", lambda: current)
+
+    result = _check_hermes_runtime(Settings(hermes_home=str(tmp_path)))
+
+    assert result.status is CheckStatus.FAIL
+    assert "restart" in result.detail.lower()
+    assert "must-not-surface" not in result.detail

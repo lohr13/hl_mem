@@ -7,6 +7,9 @@ import zipfile
 from pathlib import Path
 
 STABLE_EVALUATION_RUNNER = "hl_mem/evaluation/runner.py"
+PEP561_MARKER = "hl_mem/py.typed"
+_DATABASE_SUFFIXES = (".db", ".db-shm", ".db-wal")
+_EXTERNAL_PLUGIN_PREFIXES = ("external_plugins/", "provider_plugins/", "hl_mem_provider_")
 
 
 def check_wheel(path: Path, *, reject_v030: bool = False) -> list[str]:
@@ -16,8 +19,28 @@ def check_wheel(path: Path, *, reject_v030: bool = False) -> list[str]:
     violations: list[str] = []
     if STABLE_EVALUATION_RUNNER not in members:
         violations.append(f"missing stable evaluation module: {STABLE_EVALUATION_RUNNER}")
+    if PEP561_MARKER not in members:
+        violations.append(f"missing PEP 561 marker: {PEP561_MARKER}")
     violations.extend(
         f"repository benchmark leaked into wheel: {member}" for member in members if member.startswith("benchmarks/")
+    )
+    violations.extend(
+        f"Provider live smoke result leaked into wheel: {member}"
+        for member in members
+        if (
+            member.rsplit("/", 1)[-1].casefold().endswith(".json")
+            and all(word in member.rsplit("/", 1)[-1].casefold() for word in ("provider", "smoke", "result"))
+        )
+    )
+    violations.extend(
+        f"temporary database leaked into wheel: {member}"
+        for member in members
+        if member.casefold().endswith(_DATABASE_SUFFIXES)
+    )
+    violations.extend(
+        f"external plugin code leaked into wheel: {member}"
+        for member in members
+        if member.casefold().startswith(_EXTERNAL_PLUGIN_PREFIXES)
     )
     if reject_v030:
         violations.extend(

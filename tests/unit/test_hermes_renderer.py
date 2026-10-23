@@ -38,6 +38,81 @@ def test_renderer_preserves_item_order_and_keeps_feedback_ids_out_of_text() -> N
     assert "trace-secret" not in rendered.text
 
 
+def test_renderer_adds_one_bounded_external_source_caution() -> None:
+    rendered = render_context(
+        {
+            "schema_major": 1,
+            "items": [
+                {
+                    "type": "claim",
+                    "text": "A product is free",
+                    "feedback_id": "feedback-1",
+                    "evidence": [
+                        {
+                            "type": "event",
+                            "id": "event-1",
+                            "provenance": {
+                                "origin_class": "external_derived",
+                                "session_kind": "interactive",
+                                "observed_at": "2026-09-01T00:00:00+00:00",
+                                "source_hint": "https://example.com",
+                                "ignored": "secret-value",
+                            },
+                        },
+                        {
+                            "type": "event",
+                            "id": "event-2",
+                            "provenance": {
+                                "origin_class": "external",
+                                "session_kind": "interactive",
+                                "observed_at": "x" * 500,
+                                "source_hint": "https://user:password@bad.test/?token=secret",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert rendered.text == (
+        "A product is free\n"
+        "source note: external_derived, observed 2026-09-01T00:00:00+00:00, "
+        "https://example.com; verify time-sensitive facts"
+    )
+    assert rendered.text.count("source note:") == 1
+    for secret in ("secret-value", "password", "token="):
+        assert secret not in rendered.text
+
+
+def test_renderer_keeps_direct_and_legacy_items_byte_equivalent() -> None:
+    payload = {
+        "schema_major": 1,
+        "items": [
+            {
+                "type": "claim",
+                "text": "direct memory",
+                "feedback_id": "feedback-1",
+                "evidence": [
+                    {
+                        "type": "event",
+                        "id": "event-1",
+                        "provenance": {"origin_class": "direct_user", "session_kind": "interactive"},
+                    }
+                ],
+            },
+            {
+                "type": "claim",
+                "text": "legacy memory",
+                "feedback_id": "feedback-2",
+                "evidence": [{"type": "event", "id": "event-2"}],
+            },
+        ],
+    }
+
+    assert render_context(payload).text == "direct memory\nlegacy memory"
+
+
 def test_renderer_adds_complete_claim_relation_after_text() -> None:
     rendered = render_context(
         {

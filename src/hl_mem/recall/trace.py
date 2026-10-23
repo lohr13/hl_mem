@@ -113,6 +113,11 @@ class SearchTrace:
     entity_proof_ids: list[str] = field(default_factory=list)
     entity_filter_mode: str = "off"
     entity_filtered_count: int = 0
+    entity_residual_term_count: int = 0
+    entity_scope_counts: dict[str, int] = field(default_factory=dict)
+    entity_scope_us: int = 0
+    entity_fallback_reason: str | None = None
+    entity_fallback_embedding_calls: int = 0
     slot_boost_applied: bool = False
     tag_boost_applied: bool = False
     expansion_trigger: str | None = None

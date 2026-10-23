@@ -9,10 +9,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from hl_mem.domain.claims.measurement_admission import (
+    _measurement_basis,
+    _price_subject_relation,
+    _price_target_relation,
+)
+
 TemporalLinkOutcome = Literal[
     "entails",
     "state_change",
     "distinct_series",
+    "unproven",
     "snapshot_advance",
     "uncertain",
     "not_applicable",
@@ -37,18 +44,9 @@ _SERIES_PRICE_AXES = frozenset(
     {"spot", "close", "low", "high", "open", "average", "target", "cost_estimate", "generic_price"}
 )
 _SNAPSHOT_PRICE_AXES = frozenset({"spot", "close", "low", "high", "open", "average", "generic_price"})
-_GENERIC_SUBJECTS = frozenset({"user", "用户", "assistant", "助手", "default", "unknown", "未知"})
 _FULL_CHINESE_DATE = re.compile(r"(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日(?!\d)")
 _FULL_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 _CONTEXTUAL_CHINESE_DATE = re.compile(r"(?<![\d年])(\d{1,2})月(\d{1,2})日(?!\d)")
-_HOLDING_ENTITY = re.compile(r"持有[\d,]+(?:股|份)([\u4e00-\u9fff]{2,12}(?:ETF)?)", re.IGNORECASE)
-_NAMED_PRICE_ENTITY = re.compile(
-    r"(?:若|对|挂)([\u4e00-\u9fff]{2,12}(?:ETF)?)(?:的)?" r"(?:股价|价格|现价|收盘价|成本价|目标价)",
-    re.IGNORECASE,
-)
-_TICKER_ENTITY = re.compile(r"(?<![A-Za-z0-9])([A-Z]{2,8})(?![A-Za-z0-9])")
-_SECURITY_CODE_ENTITY = re.compile(r"(?:ETF|基金|代码|证券代码)[:：]?\s*(\d{6})(?!\d)", re.IGNORECASE)
-_ENTITY_STOPWORDS = frozenset({"ETF", "IP", "MA", "CNY", "USD"})
 
 
 @dataclass(frozen=True)
@@ -90,6 +88,10 @@ def evaluate_temporal_link(existing: dict[str, Any], new: dict[str, Any]) -> Tem
     if old_axis is None or new_axis is None:
         return TemporalLinkDecision("not_applicable", None, "no_proven_temporal_axis")
 
+    boundary = _measurement_boundary(existing, new, old_axis, new_axis)
+    if boundary is not None:
+        return boundary
+
     if _REPLACEMENT_MARKER.search(str(new.get("value") or "")):
         return _evaluate_explicit_price_replacement(existing, new, old_axis, new_axis, old_text, new_text)
 
@@ -97,6 +99,55 @@ def evaluate_temporal_link(existing: dict[str, Any], new: dict[str, Any]) -> Tem
     if series_decision is not None:
         return series_decision
     return _evaluate_explicit_price_replacement(existing, new, old_axis, new_axis, old_text, new_text)
+
+
+def _measurement_boundary(
+    existing: dict[str, Any], new: dict[str, Any], old_axis: str, new_axis: str
+) -> TemporalLinkDecision | None:
+    # Axis differences already have their own non-competing series decision.
+    if old_axis != new_axis:
+        return None
+    rule_id = f"{TEMPORAL_LINK_RULE_VERSION}:measurement-admission"
+    old_basis, old_period = _measurement_basis(existing.get("value"))
+    new_basis, new_period = _measurement_basis(new.get("value"))
+    if old_basis != new_basis or (old_period and new_period and old_period != new_period):
+        return TemporalLinkDecision("distinct_series", rule_id, "measurement_basis_or_period_differs")
+    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
+    relation = _price_target_relation(existing, new) if target_mode else _price_subject_relation(existing, new)
+    object_field = "canonical_target_entity_id" if target_mode else "subject_entity_id"
+    old_qualifiers = existing.get("qualifiers") or {}
+    new_qualifiers = new.get("qualifiers") or {}
+    measured_object = old_qualifiers.get("measurement_object")
+    same_measure = bool(measured_object and measured_object == new_qualifiers.get("measurement_object"))
+    same_owner = bool(existing.get(object_field) and existing.get(object_field) == new.get(object_field))
+    owner_types = ("person:", "org:", "organization:", "team:", "account:")
+    is_owner = any(str(claim.get(object_field) or "").casefold().startswith(owner_types) for claim in (existing, new))
+    if is_owner and not same_measure:
+        relation = "missing"
+    elif same_measure and same_owner:
+        relation = "same"
+    if relation == "different":
+        return TemporalLinkDecision(
+            "distinct_series",
+            f"{TEMPORAL_LINK_RULE_VERSION}:series-coordinate",
+            "price_target_differs" if target_mode else "price_subject_differs",
+        )
+    if relation == "missing":
+        return TemporalLinkDecision(
+            "unproven",
+            f"{TEMPORAL_LINK_RULE_VERSION}:snapshot-coordinate",
+            "price_target_missing" if target_mode else "price_subject_missing",
+        )
+    if old_basis.endswith("_total"):
+        # A statement timestamp is not the identity of a transaction or reporting period.
+        keys = ("measurement_period", "transaction_id", "event_id")
+        same_coordinate = any(
+            old_qualifiers.get(key) and old_qualifiers.get(key) == new_qualifiers.get(key) for key in keys
+        )
+        # Owner + calendar year still does not identify a salary, rent, or transaction total.
+        if not same_measure or (not same_coordinate and not (old_period and old_period == new_period)):
+            return TemporalLinkDecision("unproven", rule_id, "measurement_event_or_period_missing")
+    return None
 
 
 def _evaluate_explicit_price_replacement(
@@ -140,20 +191,7 @@ def _evaluate_price_series(
             f"price_measure_differs:{old_axis}:{new_axis}",
         )
 
-    target_mode = bool(existing.get("canonical_target_entity_id") or new.get("canonical_target_entity_id"))
-    subject_relation = _price_target_relation(existing, new) if target_mode else _price_subject_relation(existing, new)
-    if subject_relation == "different":
-        return TemporalLinkDecision(
-            "distinct_series",
-            f"{TEMPORAL_LINK_RULE_VERSION}:series-coordinate",
-            "price_target_differs" if target_mode else "price_subject_differs",
-        )
-    if subject_relation == "missing":
-        return TemporalLinkDecision(
-            "uncertain",
-            f"{TEMPORAL_LINK_RULE_VERSION}:snapshot-coordinate",
-            "price_target_missing" if target_mode else "price_subject_missing",
-        )
+    # Object and measurement identity were proved before entering any price path.
     if old_axis not in _SNAPSHOT_PRICE_AXES:
         return None
 
@@ -246,41 +284,6 @@ def _explicit_snapshot_dates(value: str, contextual_year: int | None) -> tuple[d
         return tuple(datetime(year, month, day, tzinfo=timezone.utc) for year, month, day, _ in matches)
     except ValueError:
         return None
-
-
-def _price_subject_relation(existing: dict[str, Any], new: dict[str, Any]) -> Literal["same", "different", "missing"]:
-    old_entities = _explicit_price_subjects(existing.get("value"))
-    new_entities = _explicit_price_subjects(new.get("value"))
-    if old_entities and new_entities:
-        return "same" if old_entities & new_entities else "different"
-    subject = _normalize_entity_key(existing.get("subject_entity_id"))
-    if not subject or subject in _GENERIC_SUBJECTS:
-        return "missing"
-    one_sided_entities = old_entities or new_entities
-    return "missing" if one_sided_entities and subject not in one_sided_entities else "same"
-
-
-def _price_target_relation(existing: dict[str, Any], new: dict[str, Any]) -> Literal["same", "different", "missing"]:
-    """Compare only persisted typed targets; one-sided projection is never a wildcard."""
-
-    old_target = str(existing.get("canonical_target_entity_id") or "").strip()
-    new_target = str(new.get("canonical_target_entity_id") or "").strip()
-    if not old_target or not new_target:
-        return "missing"
-    return "same" if old_target == new_target else "different"
-
-
-def _explicit_price_subjects(value: Any) -> frozenset[str]:
-    text = unicodedata.normalize("NFKC", str(value or ""))
-    found = {match.group(1) for pattern in (_HOLDING_ENTITY, _NAMED_PRICE_ENTITY) for match in pattern.finditer(text)}
-    found.update(match.group(1) for match in _TICKER_ENTITY.finditer(text) if match.group(1) not in _ENTITY_STOPWORDS)
-    found.update(match.group(1) for match in _SECURITY_CODE_ENTITY.finditer(text))
-    return frozenset(key for item in found if (key := _normalize_entity_key(item)))
-
-
-def _normalize_entity_key(value: Any) -> str:
-    normalized = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", unicodedata.normalize("NFKC", str(value or "")).casefold())
-    return normalized.removesuffix("etf")
 
 
 def _atomic_availability(claim: dict[str, Any]) -> Literal["online", "offline"] | None:

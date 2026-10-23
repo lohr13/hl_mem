@@ -121,7 +121,7 @@ REPLAY_CASES = [
             "user",
             "2026-08-18T15:19:00Z",
         ),
-        "uncertain",
+        "unproven",
         SNAPSHOT_RULE,
         "price_subject_missing",
         id="entity-08-unrelated-trading-discipline",

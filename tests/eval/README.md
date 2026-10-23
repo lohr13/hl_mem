@@ -49,6 +49,19 @@ hard/soft 并集，同时分列：
 
 ## 中文 E2E 40 case
 
+### Three isolated extraction arms
+
+For each of the three extraction-provider runs, set a unique `HL_MEM_CHINESE_E2E_CACHE_ROOT`, a unique
+`HL_MEM_CHINESE_E2E_REPORT`, and `HL_MEM_CHINESE_E2E_REFRESH=1`. Pin the shared Qwen reader with:
+
+```text
+HL_MEM_EVAL_QA_API_KEY
+HL_MEM_EVAL_QA_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
+HL_MEM_EVAL_QA_MODEL=qwen3.7-plus
+```
+
+The dedicated QA key affects only the QA reader; it never changes the extraction Provider configured by TOML.
+
 PerLTQA 的 4 个 persona 共 28 题，MemDaily 六类各 2 题共 12 题。默认复用经过 dataset、extractor、prompt、
 admission、retention、embedding 和索引配置身份校验的 `var/eval/chinese_e2e_cache/`；QA、query embedding、
 reranker 和 recall 每次仍真实执行。

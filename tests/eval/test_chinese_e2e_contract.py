@@ -32,6 +32,14 @@ SAMPLE_MANIFEST_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_sample.
 RUBRIC_V2_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "chinese_e2e_rubric_v2.json"
 
 
+def test_live_entrypoint_accepts_isolated_cache_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from tests.eval import test_chinese_e2e as entrypoint
+
+    cache_root = tmp_path / "qwen-run-1"
+    monkeypatch.setenv("HL_MEM_CHINESE_E2E_CACHE_ROOT", str(cache_root))
+    assert entrypoint._configured_cache_root() == cache_root
+
+
 def test_manifest_keeps_the_paid_sample_fixed_and_stratified() -> None:
     """Removing a slice or silently changing the paid sample must break offline validation."""
     manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
@@ -294,6 +302,13 @@ def test_report_exposes_scores_gate_failures_cache_and_token_costs() -> None:
             "input_tokens": 100,
             "output_tokens": 20,
             "total_tokens": 120,
+            "claim_budget": {
+                "overflow_truncated_count": 1,
+                "generated_claim_count": 20,
+                "retained_claim_count": 16,
+                "dropped_claim_count": 4,
+                "events": [],
+            },
         },
         "qa": {"exact_match": 1.0, "f1": 1.0, "usage": {"total_tokens": 30}},
         "retrieval": {"recall_at_5": 1.0, "mrr": 1.0},
@@ -318,6 +333,14 @@ def test_report_exposes_scores_gate_failures_cache_and_token_costs() -> None:
         "extraction_output_tokens": 20,
         "extraction_total_tokens": 120,
         "qa_total_tokens": 30,
+    }
+    assert report["run"]["claim_budget"] == {
+        "observed_ingests": 1,
+        "unobserved_ingests": 0,
+        "overflow_truncated_count": 1,
+        "generated_claim_count": 20,
+        "retained_claim_count": 16,
+        "dropped_claim_count": 4,
     }
     assert report["gate"]["passed"] is False
     assert report["gate"]["overall_thresholds"] == {"qa_accuracy": 0.90}
@@ -438,6 +461,34 @@ def test_reviewed_rubrics_use_or_between_rubrics_and_and_between_concepts() -> N
         "verdict_basis": "reviewed_rubric",
         "scorer_version": chinese_e2e.SCORER_VERSION,
     }
+
+
+def test_reviewed_rubric_allows_a_bracketed_entity_title_inside_the_required_concept() -> None:
+    manifest = load_sample_manifest(SAMPLE_MANIFEST_PATH)
+    rubrics = manifest.accepted_rubrics_by_question_hash[
+        "7336d023b16ece6a96cdf8742a314e9aea99b582bdcc7334868172ddd93b8a41"
+    ]
+
+    inserted_title = chinese_e2e.score_answer(
+        "因对电影《那些年我们一起追的女孩》的故事情节着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+    original_match = chinese_e2e.score_answer(
+        "因为对电影故事情节着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+    wrong_object = chinese_e2e.score_answer(
+        "因对电影《那些年我们一起追的女孩》的演员着迷",
+        ("对电影故事情节着迷",),
+        rubrics,
+    )
+
+    assert inserted_title["answer_correct"] == 1.0
+    assert inserted_title["verdict_basis"] == "reviewed_rubric"
+    assert original_match["answer_correct"] == 1.0
+    assert wrong_object["answer_correct"] == 0.0
 
 
 def test_cases_without_reviewed_rubrics_keep_legacy_anchor_scoring() -> None:

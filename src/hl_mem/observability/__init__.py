@@ -5,6 +5,8 @@ from hl_mem.observability.audit import (
     audit_scope,
     current_audit,
 )
+from hl_mem.observability.ops_report import ReportWindow, UsageLedgerReader, parse_report_window
+from hl_mem.observability.pricing import UsageCostEstimator, UsagePriceBook
 from hl_mem.observability.usage import (
     UsageAmount,
     UsageGovernor,
@@ -26,4 +28,9 @@ __all__ = [
     "UsageLimits",
     "UsageReservation",
     "default_usage_ledger_path",
+    "ReportWindow",
+    "UsageLedgerReader",
+    "parse_report_window",
+    "UsageCostEstimator",
+    "UsagePriceBook",
 ]

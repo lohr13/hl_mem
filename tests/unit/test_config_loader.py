@@ -54,6 +54,7 @@ def test_public_config_schema_is_secret_free_and_production_only() -> None:
     assert "fake" not in fields["extraction.mode"]["production_choices"]
     assert "fake" not in fields["embedding.mode"]["production_choices"]
     assert "fake" not in fields["reranker.mode"]["production_choices"]
+    assert fields["recall.entity_constraint_mode"]["default"] == "enforce"
     assert all(set(item) == {"environment", "settings_field"} for item in schema["secrets"])
 
 
@@ -154,6 +155,15 @@ def test_test_factory_is_the_only_fake_profile() -> None:
     assert settings.extractor_mode == "fake"
     assert settings.embedder_mode == "fake"
     settings.validate()
+
+
+@pytest.mark.parametrize("mode", ("off", "observe"))
+def test_entity_constraint_preserves_explicit_non_default_mode(tmp_path: Path, mode: str) -> None:
+    path = _write(tmp_path / f"entity-{mode}.toml", f'[recall]\nentity_constraint_mode = "{mode}"\n')
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.entity_constraint_mode == mode
 
 
 def test_semantic_automation_defaults_are_explicit_and_safe() -> None:
@@ -258,6 +268,45 @@ reservation_lease_seconds = 120
     assert settings.usage_daily_request_limit == 200
     assert settings.usage_daily_cost_limit_microunits == 500_000
     assert settings.usage_reservation_lease_seconds == 120
+
+
+def test_v1_resolves_optional_price_book_relative_to_the_config_without_exposing_path(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    path = _write(
+        config_dir / "hl_mem.toml",
+        _v1('[usage]\nprice_book_path = "pricing/provider.json"\n'),
+    )
+
+    settings = _load_structural_settings(path, environ={})
+
+    assert settings.usage_price_book_path == str((config_dir / "pricing" / "provider.json").resolve())
+    snapshot = settings.snapshot()
+    assert snapshot["price_book_configured"] is True
+    assert "usage_price_book_path" not in snapshot
+    assert str(config_dir) not in repr(snapshot)
+
+
+def test_v1_without_price_book_keeps_the_existing_optional_config_contract(tmp_path: Path) -> None:
+    settings = _load_structural_settings(_write(tmp_path / "hl_mem.toml"), environ={})
+
+    assert settings.usage_price_book_path is None
+    assert settings.snapshot()["price_book_configured"] is False
+
+
+def test_public_config_schema_adds_only_the_optional_price_book_path() -> None:
+    schema = build_config_schema()
+    pricing_fields = [item for item in schema["fields"] if item["path"].startswith("usage.price_book")]
+
+    assert pricing_fields == [
+        {
+            "default": None,
+            "path": "usage.price_book_path",
+            "required_in_production": False,
+            "settings_field": "usage_price_book_path",
+            "type": "string",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -398,7 +447,7 @@ def test_release_example_config_matches_approved_modes() -> None:
     assert settings.hermes_manual_conflict_notice is True
     assert settings.dedup_audit_only is True
     assert settings.lesson_signal_mode == "observe"
-    assert settings.entity_constraint_mode == "observe"
+    assert settings.entity_constraint_mode == "enforce"
 
 
 @pytest.mark.parametrize("retired_mode", ("observe", "enforce"))
@@ -658,6 +707,56 @@ def test_relative_database_path_uses_real_config_target_directory(
     assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
 
 
+def test_relative_database_and_price_book_paths_share_real_config_target_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    source_dir = tmp_path / "source"
+    canonical_dir.mkdir()
+    source_dir.mkdir()
+    canonical_config = _write(
+        canonical_dir / "hl_mem.toml",
+        (
+            '[database]\npath = "data/memory.db"\n'
+            '[usage]\nprice_book_path = "pricing/provider.json"\n'
+            '[recall]\nquery_expansion_mode = "off"\n'
+        ),
+    )
+    linked_config = tmp_path / "hl_mem.toml"
+    linked_config.symlink_to(canonical_config)
+    monkeypatch.chdir(source_dir)
+
+    settings = _load_structural_settings(linked_config, tmp_path / ".env", environ={})
+
+    assert settings.database_path == str((canonical_dir / "data" / "memory.db").resolve())
+    assert settings.usage_price_book_path == str((canonical_dir / "pricing" / "provider.json").resolve())
+
+
+@pytest.mark.parametrize(
+    ("platform", "foreign_path", "expected"),
+    [
+        ("linux", "D:/hl_mem/prices.json", r"usage\.price_book_path.*Windows absolute path.*POSIX"),
+        ("win32", "/opt/hl_mem/prices.json", r"usage\.price_book_path.*POSIX absolute path.*Windows"),
+    ],
+)
+def test_price_book_rejects_foreign_absolute_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    foreign_path: str,
+    expected: str,
+) -> None:
+    config_path = _write(
+        tmp_path / "hl_mem.toml",
+        f'[usage]\nprice_book_path = "{foreign_path}"\n[recall]\nquery_expansion_mode = "off"\n',
+    )
+    monkeypatch.setattr(sys, "platform", platform)
+
+    with pytest.raises(ConfigurationError, match=expected):
+        _load_structural_settings(config_path, tmp_path / ".env", environ={})
+
+
 @pytest.mark.parametrize("foreign_path", ["D:/hl_mem/var/hl_mem.db", r"\\server\share\hl_mem.db"])
 def test_posix_rejects_windows_absolute_database_paths(
     tmp_path: Path,
@@ -800,3 +899,33 @@ def test_every_settings_field_declares_exactly_one_source() -> None:
             {"plugin_namespace"},
             {"schema_version"},
         )
+
+
+def test_provenance_mode_defaults_to_enforce_and_loads_observe(tmp_path: Path) -> None:
+    default = Settings()
+    configured = _load_structural_settings(
+        _write(tmp_path / "provenance.toml", '[provenance]\nmode = "observe"\n'),
+        environ={},
+    )
+
+    assert default.provenance_mode == "enforce"
+    assert configured.provenance_mode == "observe"
+    with pytest.raises(ConfigurationError, match="provenance.mode"):
+        Settings(provenance_mode="invalid").validate()
+
+
+def test_memory_disposition_mode_defaults_to_enforce_and_loads_rollout_modes(tmp_path: Path) -> None:
+    observed = _load_structural_settings(
+        _write(tmp_path / "memory-disposition-observe.toml", '[extraction]\nmemory_disposition_mode = "observe"\n'),
+        environ={},
+    )
+    disabled = _load_structural_settings(
+        _write(tmp_path / "memory-disposition-off.toml", '[extraction]\nmemory_disposition_mode = "off"\n'),
+        environ={},
+    )
+
+    assert Settings().memory_disposition_mode == "enforce"
+    assert observed.memory_disposition_mode == "observe"
+    assert disabled.memory_disposition_mode == "off"
+    with pytest.raises(ConfigurationError, match="extraction.memory_disposition_mode"):
+        Settings(memory_disposition_mode="invalid").validate()

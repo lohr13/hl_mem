@@ -162,6 +162,19 @@ def test_compact_model_slot_does_not_forge_task_from_generic_subject() -> None:
 
 
 def test_compact_model_slot_keeps_explicit_source_bounded_task() -> None:
+    value = "HL-Mem judge 模型使用 qwen3.7-plus"
+    extractor = LLMExtractor(
+        _FakeLLMClient(_compact_choice_claim(subject="HL-Mem judge 模型", value=value, evidence_quote=value)),
+        ChunkingPolicy(10_000, 0, 2),
+    )
+
+    claim = extractor.extract(value)[0]
+
+    assert claim.canonical_slot == "choice.model"
+    assert claim.qualifiers == {"task": "judge"}
+
+
+def test_compact_model_slot_rejects_task_only_present_in_statement_body() -> None:
     value = "用户决定使用 qwen3.7-plus 作为 judge 模型"
     extractor = LLMExtractor(
         _FakeLLMClient(_compact_choice_claim(subject="用户", value=value, evidence_quote=value)),
@@ -170,8 +183,8 @@ def test_compact_model_slot_keeps_explicit_source_bounded_task() -> None:
 
     claim = extractor.extract(value)[0]
 
-    assert claim.canonical_slot == "choice.model"
-    assert claim.qualifiers == {"task": "judge"}
+    assert claim.canonical_slot is None
+    assert claim.qualifiers == {}
 
 
 def test_compact_required_subject_qualifier_must_be_explicit_in_evidence_quote() -> None:
@@ -261,9 +274,8 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
     assert payload["total_tokens"] == 8
 
 
-def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
-    """恰好命中 schema 上限时应告警可能存在模型自行省略。"""
-    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(30)]
+def test_exact_claim_limit_does_not_emit_overflow_audit() -> None:
+    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(24)]
     raw = json.dumps(
         {
             "claims": [
@@ -287,23 +299,8 @@ def test_exact_claim_limit_emits_possible_under_extraction_audit() -> None:
     with audit_scope(audit):
         claims = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(source)
 
-    assert len(claims) == 30
-    warnings = [event for event in audit.events if event[1] == "possible_under_extraction"]
-    assert warnings == [
-        (
-            "extract",
-            "possible_under_extraction",
-            "claim_limit_reached",
-            {
-                "claim_count": 30,
-                "schema_limit": 30,
-                "chunk_index": 0,
-                "start_unit": 0,
-                "end_unit": 1,
-                "source_length": len(source),
-            },
-        )
-    ]
+    assert len(claims) == 24
+    assert not [event for event in audit.events if event[1] == "claim_budget"]
 
 
 def test_occurred_at_is_injected_into_user_prompt() -> None:

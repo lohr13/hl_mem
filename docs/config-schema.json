@@ -316,6 +316,18 @@
       "type": "integer"
     },
     {
+      "default": "enforce",
+      "path": "extraction.memory_disposition_mode",
+      "production_choices": [
+        "off",
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "memory_disposition_mode",
+      "type": "string"
+    },
+    {
       "default": "llm",
       "path": "extraction.mode",
       "production_choices": [
@@ -589,7 +601,7 @@
       "type": "string"
     },
     {
-      "default": 90.0,
+      "default": 240.0,
       "path": "llm.timeout",
       "required_in_production": false,
       "settings_field": "llm_timeout",
@@ -626,6 +638,17 @@
       ],
       "required_in_production": false,
       "settings_field": "price_target_mode",
+      "type": "string"
+    },
+    {
+      "default": "enforce",
+      "path": "provenance.mode",
+      "production_choices": [
+        "observe",
+        "enforce"
+      ],
+      "required_in_production": false,
+      "settings_field": "provenance_mode",
       "type": "string"
     },
     {
@@ -704,7 +727,7 @@
       "type": "string"
     },
     {
-      "default": "observe",
+      "default": "enforce",
       "path": "recall.entity_constraint_mode",
       "production_choices": [
         "off",
@@ -1434,6 +1457,13 @@
       "required_in_production": false,
       "settings_field": "usage_daily_request_limit",
       "type": "integer"
+    },
+    {
+      "default": null,
+      "path": "usage.price_book_path",
+      "required_in_production": false,
+      "settings_field": "usage_price_book_path",
+      "type": "string"
     },
     {
       "default": 300,

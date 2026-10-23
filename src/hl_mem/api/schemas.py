@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hl_mem.application.answerability import Answerability
 from hl_mem.application.conflicts import DEFAULT_HUMAN_RESOLVER
+from hl_mem.domain.provenance import OriginClass, SessionKind
 from hl_mem.domain.recall import RecallIntent
 from hl_mem.recall.injection import DEFAULT_POLICY_VERSIONS
 
@@ -59,6 +60,8 @@ class EventInput(NamespaceInput):
     occurred_at: str | None = None
     source_uri: str | None = Field(default=None, max_length=2000)
     sensitivity: str = Field(default="normal", max_length=20)
+    origin_class: OriginClass = "unknown"
+    session_kind: SessionKind = "unknown"
 
 
 class EventBatchInput(BaseModel):

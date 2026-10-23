@@ -45,12 +45,15 @@ def render_context(payload: Mapping[str, Any]) -> RenderedContext:
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
+        raw_evidence = item.get("evidence")
+        evidence = raw_evidence if isinstance(raw_evidence, (list, tuple)) else ()
         texts.append(
             render_memory_text(
                 text,
                 role=item.get("role") if item.get("type") == "claim" else None,
                 action=item.get("action") if item.get("type") == "claim" else None,
                 object_=item.get("object") if item.get("type") == "claim" else None,
+                evidence=evidence,
             )
         )
         feedback_id = item.get("feedback_id")

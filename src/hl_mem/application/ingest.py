@@ -24,6 +24,11 @@ from hl_mem.application._ingest_resolution import (
 from hl_mem.application.ingest_coordinates import IngestCoordinateProjection
 from hl_mem.application.ingest_evidence import link_source_events as _link_source_events
 from hl_mem.application.latest_wins import begin_latest_wins, finish_latest_wins
+from hl_mem.application.provenance_admission import (
+    GovernedClaimInput,
+    govern_claim_input,
+    provenance_audit_event,
+)
 from hl_mem.config import INGEST_DEDUP_PAIR_SIMILARITY_FLOOR
 from hl_mem.core.vector import cosine_similarity
 from hl_mem.domain.claims.attributes import (
@@ -50,6 +55,7 @@ from hl_mem.domain.entity import (
     isolated_subject_id,
     normalize_entity_id,
 )
+from hl_mem.domain.provenance import validate_event_provenance
 from hl_mem.errors import ConflictError, ValidationError
 from hl_mem.ingest.extractors import ExtractedClaim
 from hl_mem.lifecycle import assert_transition
@@ -71,6 +77,41 @@ class _ClaimDraft:
 
     claim: dict[str, Any]
     qualifiers: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ClaimDraftContext:
+    policy: TTLPolicy | None
+    ttl_days: int | None
+    now: str
+    embedder: EmbedderProtocol
+    index_text_mode: IndexTextMode
+    trusted_projector_slot: str | None
+
+
+def _prepare_governed_claim(
+    connection: sqlite3.Connection,
+    extracted: ExtractedClaim,
+    event: dict[str, Any],
+    source_events: Sequence[dict[str, Any]] | None,
+    authority: str | None,
+    context: _ClaimDraftContext,
+) -> tuple[list[dict[str, Any]], GovernedClaimInput, _ClaimDraft | StoreClaimResult]:
+    evidence_events = IngestService._validate_source_events(event, source_events)
+    governed = govern_claim_input(connection, extracted, authority, evidence_events)
+    if not governed.admission.allowed:
+        return evidence_events, governed, StoreClaimResult(None, "skipped", governed.admission.reason_code)
+    draft = _build_claim_drafts(
+        governed.extracted,
+        event,
+        context.now,
+        context.embedder,
+        governed.authority,
+        IngestService._retention_policy(context.policy, context.ttl_days),
+        context.index_text_mode,
+        context.trusted_projector_slot,
+    )
+    return evidence_events, governed, draft
 
 
 @dataclass(frozen=True)
@@ -115,16 +156,18 @@ def _commit_store_result(
     return result
 
 
-def _episodic_retention_anchor(
+def _retention_anchor(
+    observed_at: str,
     recorded_from: str,
     *,
+    memory_layer: str,
     is_plan: bool,
     occurred_start: str | None,
     occurred_end: str | None,
 ) -> str:
-    """Anchor facts at ingestion and plans after their latest known occurrence boundary."""
+    """Select one normalized TTL anchor without changing the Claim's event time."""
     if not is_plan:
-        return recorded_from
+        return recorded_from if memory_layer == "episodic" else observed_at
     anchors = [recorded_from]
     for field_name, value in (("occurred_start", occurred_start), ("occurred_end", occurred_end)):
         if value:
@@ -205,6 +248,8 @@ def _canonical_event_payload(
         "metadata": event.get("metadata") or {},
         "source_uri": event.get("source_uri"),
         "sensitivity": event.get("sensitivity", "normal"),
+        "origin_class": event.get("origin_class", "unknown"),
+        "session_kind": event.get("session_kind", "unknown"),
     }
     if include_id:
         payload["id"] = event.get("id")
@@ -269,6 +314,7 @@ class IngestService:
         timestamp_value = datetime.fromisoformat(timestamp)
         prepared: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
         for index, event in enumerate(events_to_ingest):
+            provenance = validate_event_provenance(event)
             key = event.get("idempotency_key")
             event_id = event.get("id") or new_id()
             content = event.get("content", {})
@@ -287,6 +333,8 @@ class IngestService:
                 content=content,
                 occurred_at=event.get("occurred_at") or timestamp,
                 recorded_at=recorded_at,
+                origin_class=provenance.origin_class,
+                session_kind=provenance.session_kind,
             )
             prepared.append((event, stored_event, key))
         results: list[dict[str, Any]] = []
@@ -391,25 +439,25 @@ class IngestService:
         """持久化提取出的 claim，并执行精确、冲突及语义去重。"""
         audit = current_audit()
         claims, evidence = ClaimRepository(connection), EvidenceRepository(connection)
-        evidence_events = IngestService._validate_source_events(event, source_events)
-        effective_policy = IngestService._retention_policy(policy, ttl_days)
-        draft = _build_claim_drafts(
+        evidence_events, governed, draft = _prepare_governed_claim(
+            connection,
             extracted,
             event,
-            now,
-            embedder,
+            source_events,
             authority,
-            effective_policy,
-            index_text_mode,
-            _trusted_projector_slot,
+            _ClaimDraftContext(policy, ttl_days, now, embedder, index_text_mode, _trusted_projector_slot),
         )
         if isinstance(draft, StoreClaimResult):
-            IngestService._emit_rejected_claim(audit, draft, event, extracted)
+            if not governed.admission.preserve_existing:
+                provenance_event = provenance_audit_event(event, governed)
+                audit.emit(*provenance_event[0], **provenance_event[1])
+            IngestService._emit_rejected_claim(audit, draft, event, governed.extracted)
             return draft
         claim, qualifiers = draft.claim, draft.qualifiers
         namespace = claim["namespace_key"]
         audit_events: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
+        if not governed.admission.preserve_existing:
+            audit_events.append(provenance_audit_event(event, governed))
         result_id = claim["id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -766,7 +814,7 @@ class IngestService:
                 return _IngestResolution(
                     superseded_member_ids=tuple(str(member["id"]) for member in temporal_resolution.members)
                 )
-            if temporal_resolution.outcome == "distinct_series":
+            if temporal_resolution.outcome in {"distinct_series", "unproven"}:
                 return _IngestResolution()
             claim["status"] = "disputed"
             return _IngestResolution(
@@ -902,7 +950,6 @@ def _build_claim_drafts(
 ) -> _ClaimDraft | StoreClaimResult:
     """阶段 1：规范化提取结果、计算 TTL 并生成 claim 草稿。"""
     # Claim 的实体、去重与冲突身份由 (namespace_key, subject_entity_id) 共同确定。
-    # 其他多租户安全边界仍需由部署层统一约束，不能仅依赖此处的 namespace。
     namespace = event.get("tenant_id", "default")
     original_subject = extracted.subject
     subject = normalize_entity_id(original_subject)
@@ -973,15 +1020,14 @@ def _build_claim_drafts(
     observed_at = normalize_utc_iso(str(event.get("occurred_at", now)), "observed_at")
     recorded_from = normalize_utc_iso(now, "recorded_from")
     memory_layer = getattr(extracted, "memory_layer", "durable")
-    if memory_layer == "episodic":
-        retention_anchor = _episodic_retention_anchor(
-            recorded_from,
-            is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
-            occurred_start=getattr(extracted, "occurred_start", None),
-            occurred_end=getattr(extracted, "occurred_end", None),
-        )
-    else:
-        retention_anchor = observed_at
+    retention_anchor = _retention_anchor(
+        observed_at,
+        recorded_from,
+        memory_layer=memory_layer,
+        is_plan=canonical_attribute.startswith("plan.") or predicate == "计划",
+        occurred_start=getattr(extracted, "occurred_start", None),
+        occurred_end=getattr(extracted, "occurred_end", None),
+    )
     expires_at, _expiration_reason = compute_expiration(
         scope=scope,
         importance=importance,

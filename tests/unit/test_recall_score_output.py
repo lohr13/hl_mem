@@ -145,6 +145,124 @@ class RecallScoreOutputTest(unittest.TestCase):
         self.assertEqual(result["equivalent_claim_ids"], ["alias"])
         self.assertEqual(ClaimOutput.model_validate(result).equivalent_claim_ids, ["alias"])
 
+    def test_assembly_enriches_external_evidence_in_one_bounded_query(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "provenance-evidence.db").open()
+            connection.execute(
+                "INSERT INTO events(id,event_type,actor_type,content_json,occurred_at,recorded_at,source_uri,"
+                "origin_class,session_kind) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    "event-external",
+                    "tool_result",
+                    "tool",
+                    '{"secret":"raw-tool-output"}',
+                    "2026-09-01T00:00:00+00:00",
+                    "2026-09-01T00:00:01+00:00",
+                    "https://user:password@example.com/private?token=secret#fragment",
+                    "external",
+                    "interactive",
+                ),
+            )
+            connection.execute(
+                "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation,weight) "
+                "VALUES('link','claim','claim','event','event-external','supports',1.0)"
+            )
+            connection.commit()
+            statements: list[str] = []
+            connection.set_trace_callback(statements.append)
+
+            result = RecallService(connection, FakeEmbedder(2))._assemble_results(
+                [
+                    {
+                        "id": "claim",
+                        "value": "public index text",
+                        "status": "active",
+                        "confidence": 0.9,
+                        "valid_from": None,
+                        "superseded_by_id": None,
+                    }
+                ]
+            )[0]
+            connection.set_trace_callback(None)
+            connection.close()
+
+        self.assertEqual(
+            result["evidence"],
+            [
+                {
+                    "type": "event",
+                    "id": "event-external",
+                    "provenance": {
+                        "origin_class": "external",
+                        "session_kind": "interactive",
+                        "observed_at": "2026-09-01T00:00:00+00:00",
+                        "source_hint": "https://example.com",
+                    },
+                }
+            ],
+        )
+        provenance_queries = [statement for statement in statements if "event.origin_class" in statement]
+        self.assertEqual(len(provenance_queries), 1)
+        self.assertNotIn("raw-tool-output", repr(result))
+        self.assertNotIn("password", repr(result))
+        self.assertNotIn("token=", repr(result))
+
+    def test_assembly_preserves_direct_and_unknown_evidence_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = Database(Path(directory) / "compatible-evidence.db").open()
+            connection.executemany(
+                "INSERT INTO events(id,event_type,actor_type,content_json,occurred_at,recorded_at,"
+                "origin_class,session_kind) VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        "direct",
+                        "message",
+                        "user",
+                        "{}",
+                        "2026-09-01T00:00:00+00:00",
+                        "2026-09-01T00:00:00+00:00",
+                        "direct_user",
+                        "interactive",
+                    ),
+                    (
+                        "legacy",
+                        "message",
+                        "user",
+                        "{}",
+                        "2026-09-01T00:00:00+00:00",
+                        "2026-09-01T00:00:00+00:00",
+                        "unknown",
+                        "unknown",
+                    ),
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO evidence_links(id,derived_type,derived_id,evidence_type,evidence_id,relation,weight) "
+                "VALUES(?,?,?,?,?,?,?)",
+                [
+                    ("direct-link", "claim", "direct-claim", "event", "direct", "supports", 1.0),
+                    ("legacy-link", "claim", "legacy-claim", "event", "legacy", "supports", 1.0),
+                ],
+            )
+            connection.commit()
+            results = RecallService(connection, FakeEmbedder(2))._assemble_results(
+                [
+                    {
+                        "id": claim_id,
+                        "value": claim_id,
+                        "status": "active",
+                        "confidence": 0.9,
+                        "valid_from": None,
+                        "superseded_by_id": None,
+                    }
+                    for claim_id in ("direct-claim", "legacy-claim")
+                ]
+            )
+            connection.close()
+
+        self.assertEqual(results[0]["evidence"], [{"type": "event", "id": "direct"}])
+        self.assertEqual(results[1]["evidence"], [{"type": "event", "id": "legacy"}])
+
 
 if __name__ == "__main__":
     unittest.main()

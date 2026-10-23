@@ -61,6 +61,10 @@ class UsageReservationError(UsageGovernanceError):
     """用量预留不存在、状态无效或发生矛盾终结。"""
 
 
+class OpsReportError(UsageGovernanceError):
+    """A read-only usage-ledger report could not be produced safely."""
+
+
 class ExternalServiceError(HlMemError, RuntimeError):
     """外部服务调用失败。"""
 

@@ -8,6 +8,19 @@ import pytest
 from scripts import write_release_evidence
 
 
+def test_required_evidence_matches_consolidated_release_gates() -> None:
+    assert write_release_evidence.REQUIRED_EVIDENCE == frozenset(
+        {
+            "python-3.13",
+            "release-only",
+            "public-recall",
+            "pip-audit",
+            "sbom",
+            "wheel-install",
+        }
+    )
+
+
 def _junit(path: Path, *, failures: int = 0, errors: int = 0) -> None:
     path.write_text(
         f'<testsuite name="gate" tests="1" failures="{failures}" errors="{errors}" skipped="0"/>',
@@ -16,6 +29,22 @@ def _junit(path: Path, *, failures: int = 0, errors: int = 0) -> None:
 
 
 def _arguments(output: Path, evidence: Path, *, omitted: str | None = None) -> list[str]:
+    public_recall = evidence.with_name("public-recall.json")
+    public_recall.write_text(
+        json.dumps(
+            {
+                "gate_status": "passed",
+                "case_count": 1,
+                "http_success_rate": 1.0,
+                "total_forbidden_hits": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pip_audit = evidence.with_name("pip-audit.json")
+    pip_audit.write_text(json.dumps({"dependencies": []}), encoding="utf-8")
+    sbom = evidence.with_name("sbom.cdx.json")
+    sbom.write_text(json.dumps({"bomFormat": "CycloneDX"}), encoding="utf-8")
     arguments = [
         "--version",
         "1.0.0rc1",
@@ -27,7 +56,15 @@ def _arguments(output: Path, evidence: Path, *, omitted: str | None = None) -> l
         str(output),
     ]
     for name in sorted(write_release_evidence.REQUIRED_EVIDENCE):
-        if name != omitted:
+        if name == omitted:
+            continue
+        if name == "public-recall":
+            arguments.extend(("--json", f"{name}={public_recall}"))
+        elif name == "pip-audit":
+            arguments.extend(("--json", f"{name}={pip_audit}"))
+        elif name == "sbom":
+            arguments.extend(("--file", f"{name}={sbom}"))
+        else:
             arguments.extend(("--junit", f"{name}={evidence}"))
     return arguments
 
@@ -84,3 +121,37 @@ def test_pip_audit_list_accepts_zero_vulnerabilities(tmp_path: Path) -> None:
         "dependencies": 1,
         "vulnerabilities": 0,
     }
+
+
+def test_pip_audit_current_object_accepts_zero_vulnerabilities(tmp_path: Path) -> None:
+    audit = tmp_path / "pip-audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "example", "version": "1.0", "vulns": []}],
+                "fixes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert write_release_evidence.validate_pip_audit(audit) == {
+        "dependencies": 1,
+        "vulnerabilities": 0,
+    }
+
+
+def test_pip_audit_current_object_rejects_vulnerabilities(tmp_path: Path) -> None:
+    audit = tmp_path / "pip-audit.json"
+    audit.write_text(
+        json.dumps(
+            {
+                "dependencies": [{"name": "example", "version": "1.0", "vulns": [{"id": "CVE-TEST"}]}],
+                "fixes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="1 vulnerabilities"):
+        write_release_evidence.validate_pip_audit(audit)

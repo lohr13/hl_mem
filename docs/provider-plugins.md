@@ -97,3 +97,17 @@ not exist. Built-ins pass through the same Registry and collision rules.
 `hl-mem doctor` resolves enabled plugins without creating the usage sidecar, reports the trusted-in-process boundary, and
 inspects any existing usage ledger read-only. `/healthz` exposes only plugin ID, capability/name, stability, registration
 health and aggregate usage; it does not expose plugin options, endpoints, credentials or model responses.
+
+## Reference implementation evidence
+
+The independently built `hl-mem-provider-dashscope` reference distribution implements stable LLM, Embedding, and
+Reranker adapters using only `hl_mem.plugins`. Release-only artifact verification installs released `hl-mem==1.0.0` and
+the plugin wheel into a clean Python 3.13 environment, proves that disabled metadata is not imported, enables all three
+capabilities, and confirms that a malformed external response does not damage the built-in Registry. Python 3.13 is the
+sole CI-authoritative runtime; package installation metadata remains unchanged.
+
+A bounded live smoke additionally selected the external Embedding and Reranker capabilities while retaining the built-in
+Zhipu Coding Plan LLM. Both external network paths completed through host-owned transport, budget, audit, retry, and
+settlement proxies with zero dangling reservations. The external LLM adapter remains covered by request/response fixtures;
+no live-service claim is made for that capability. The reference distribution is integration evidence, not an official
+plugin marketplace or a promise to publish that package.

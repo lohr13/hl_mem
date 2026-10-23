@@ -14,8 +14,10 @@ from typing import Any, Literal, cast
 from hl_mem.application.answerability import Answerability
 from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MAJOR as RETRIEVAL_BUNDLE_SCHEMA_MAJOR
 from hl_mem.compatibility import CONTEXT_PACKET_SCHEMA_MINOR as RETRIEVAL_BUNDLE_SCHEMA_MINOR
+from hl_mem.domain.provenance import ORIGIN_CLASSES, SESSION_KINDS, aggregate_event_provenance
 from hl_mem.experience.service import ExperienceService
 from hl_mem.recall.freshness_annotation import FreshnessEvaluation
+from hl_mem.security.source_hint import safe_source_hint
 
 LOGGER = logging.getLogger(__name__)
 
@@ -95,18 +97,66 @@ def project_claim_relation(claim: Mapping[str, Any]) -> tuple[str, str, str] | N
     )
 
 
+def _safe_observed_at(value: object) -> str | None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 40:
+        return None
+    return value if all(character.isdigit() or character in "-:+.TZ" for character in value) else None
+
+
+def provenance_caution(evidence: Iterable[Mapping[str, Any]]) -> str | None:
+    """Render one bounded caution from controlled provenance metadata."""
+    safe_items: list[dict[str, Any]] = []
+    for reference in evidence:
+        raw = reference.get("provenance")
+        if not isinstance(raw, Mapping):
+            continue
+        origin = raw.get("origin_class")
+        session = raw.get("session_kind")
+        if origin not in ORIGIN_CLASSES or session not in SESSION_KINDS:
+            continue
+        safe_items.append(
+            {
+                "origin_class": origin,
+                "session_kind": session,
+                "observed_at": _safe_observed_at(raw.get("observed_at")),
+                "source_hint": safe_source_hint(raw.get("source_hint")),
+            }
+        )
+    if not safe_items:
+        return None
+    summary = aggregate_event_provenance(safe_items)
+    if not (summary.external or summary.automated):
+        return None
+    representative = next(
+        item
+        for item in safe_items
+        if item["origin_class"] == summary.origin_class or item["session_kind"] == summary.session_kind
+    )
+    details: list[str] = [summary.origin_class]
+    if representative["observed_at"]:
+        details.append(f"observed {representative['observed_at']}")
+    if representative["source_hint"]:
+        details.append(str(representative["source_hint"]))
+    suffix = "verify time-sensitive facts" if summary.external else "automated session record"
+    return f"source note: {', '.join(details)}; {suffix}"
+
+
 def render_memory_text(
     text: str,
     *,
     role: object = None,
     action: object = None,
     object_: object = None,
+    evidence: Iterable[Mapping[str, Any]] = (),
 ) -> str:
     """渲染 reader 可见文本；只有完整 RAO 才追加结构化关系行。"""
 
     relation = normalize_relation_components(role, action, object_)
+    caution = provenance_caution(evidence)
     if relation is None:
-        return text
+        return f"{text}\n{caution}" if caution is not None else text
+    if caution is not None:
+        text = f"{text}\n{caution}"
     normalized_role, normalized_action, normalized_object = relation
     return f"{text}\nrelation: {normalized_role} → {normalized_action} → {normalized_object}"
 
@@ -282,6 +332,7 @@ def pack_retrieval_items(
                 role=item.role,
                 action=item.action,
                 object_=item.object,
+                evidence=item.evidence,
             )
         )
         if used + cost > token_budget:
@@ -386,6 +437,7 @@ class ContextPacketAssembler:
                         role=item.role,
                         action=item.action,
                         object_=item.object,
+                        evidence=item.evidence,
                     )
                 )
                 for item in bundle.items

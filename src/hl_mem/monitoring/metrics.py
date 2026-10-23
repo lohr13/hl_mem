@@ -35,6 +35,7 @@ class ProviderCall:
     rerank_documents: int = 0
     images: int = 0
     cost_microunits: int | None = None
+    price_book_fingerprint: str | None = None
 
 
 class ProviderMetrics:
@@ -69,7 +70,7 @@ class ProviderMetrics:
                 return 0.0
             return latencies[min(len(latencies) - 1, max(0, math.ceil(value * len(latencies)) - 1))]
 
-        return {
+        snapshot: dict[str, object] = {
             "calls": len(calls),
             "failures": sum(call.status != "success" for call in calls),
             "timeouts": errors["http_timeout"] + errors["deadline_timeout"],
@@ -96,6 +97,12 @@ class ProviderMetrics:
                 for (plugin_id, provider, model), count in sorted(providers.items())
             ],
         }
+        fingerprints = {call.price_book_fingerprint for call in calls if call.price_book_fingerprint is not None}
+        if len(fingerprints) == 1:
+            snapshot["price_book_fingerprint"] = next(iter(fingerprints))
+        elif fingerprints:
+            snapshot["price_book_fingerprints"] = sorted(fingerprints)
+        return snapshot
 
 
 DEFAULT_PROVIDER_METRICS = ProviderMetrics()
