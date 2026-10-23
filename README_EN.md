@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Version: 1.1.4](https://img.shields.io/badge/version-1.1.4-blue.svg)](docs/CHANGELOG.md)
+[![Version: 1.1.7](https://img.shields.io/badge/version-1.1.7-blue.svg)](docs/CHANGELOG.md)
 [![CI](https://github.com/lohr13/hl_mem/actions/workflows/test.yml/badge.svg)](https://github.com/lohr13/hl_mem/actions/workflows/test.yml)
 
 [中文](README.md) | [English](#english)
@@ -164,6 +164,10 @@ than a security sandbox. See the [support policy](docs/support.md) for the full 
 | [Provider plugins](docs/provider-plugins.md) | Extension API and trust boundary |
 | [Compatibility](docs/compatibility.md) | Upgrade, restore, and public contracts |
 | [Changelog](docs/CHANGELOG.md) | Current release and version history |
+
+## Feedback
+
+Ask questions and share experience in [Discussions](https://github.com/lohr13/hl_mem/discussions); file bugs and feature requests as [Issues](https://github.com/lohr13/hl_mem/issues).
 
 ## Contributing
 

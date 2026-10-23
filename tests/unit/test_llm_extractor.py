@@ -275,7 +275,7 @@ def test_extract_metrics_count_schema_retries_and_repairs(caplog) -> None:
 
 
 def test_exact_claim_limit_does_not_emit_overflow_audit() -> None:
-    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(16)]
+    values = [f"The user recorded collection item {index} with quantity {index + 1}" for index in range(24)]
     raw = json.dumps(
         {
             "claims": [
@@ -299,7 +299,7 @@ def test_exact_claim_limit_does_not_emit_overflow_audit() -> None:
     with audit_scope(audit):
         claims = LLMExtractor(_FakeLLMClient(raw), ChunkingPolicy(10_000, 0, 2)).extract(source)
 
-    assert len(claims) == 16
+    assert len(claims) == 24
     assert not [event for event in audit.events if event[1] == "claim_budget"]
 
 

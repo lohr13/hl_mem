@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import httpx
 
@@ -82,7 +82,10 @@ def _shard_report(
                 "extraction_chunk_target_chars": 12_000,
                 "extraction_chunk_overlap_turns": 2,
                 "reader_context_protocol": runner.READER_CONTEXT_PROTOCOL_VERSION,
+                "reader_prompt_protocol": runner.READER_PROMPT_PROTOCOL_VERSION,
                 "query_expansion_model": "qwen3.7-plus",
+                "query_expansion_mode": "off",
+                "query_expansion_max": 2,
                 "embedder": "qwen3.7-text-embedding",
                 "embedding_dim": 2048,
                 "embedding_api_mode": "native",
@@ -118,6 +121,52 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(result["dedup"], dedup_result)
         self.assertEqual(result["conflicts"], conflict_result)
         self.assertEqual(result["protocol"], runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION)
+
+    def test_ingest_worker_accepts_ambiguous_reconcile_status_but_rejects_dead(self) -> None:
+        case = runner.LongMemEvalCase(
+            case_id="worker-status",
+            question_type="multi-session",
+            question="What happened?",
+            answer="An answer",
+            question_at=None,
+            sessions=(),
+            gold_event_ids=(),
+            gold_session_ids=(),
+        )
+        settings = Settings.for_test()
+        accepted_worker = Mock()
+        accepted_worker.run_once.side_effect = ({"status": "ambiguous"}, {"status": "idle"})
+        with (
+            patch.object(runner, "make_extractor", return_value=object()),
+            patch.object(runner, "_BenchmarkWorker", return_value=accepted_worker),
+            patch.object(runner, "_claim_inflation_diagnostics", return_value={}),
+        ):
+            stats = runner._ingest_case(
+                object(),
+                case,
+                settings,
+                object(),
+                case_number=1,
+                total_hint="1",
+            )
+
+        self.assertEqual(stats["events"], 0)
+
+        dead_worker = Mock()
+        dead_worker.run_once.return_value = {"status": "dead"}
+        with (
+            patch.object(runner, "make_extractor", return_value=object()),
+            patch.object(runner, "_BenchmarkWorker", return_value=dead_worker),
+            self.assertRaisesRegex(RuntimeError, "production extraction worker failed for worker-status: dead"),
+        ):
+            runner._ingest_case(
+                object(),
+                case,
+                settings,
+                object(),
+                case_number=1,
+                total_hint="1",
+            )
 
     def test_run_case_performs_maintenance_after_ingest_before_recall(self) -> None:
         case = runner.normalize_case(_record("case-maintenance-order"))
@@ -230,6 +279,165 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             ["cache", "maintenance", "recall", "cache", "maintenance", "recall"],
         )
         self.assertEqual(result["maintenance"], {"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION})
+
+    def test_run_case_reuses_valid_manifest_cache_without_reingesting(self) -> None:
+        case = runner.normalize_case(_record("case-resume-cache"))
+        database_path = runner.DATABASE_ROOT / "case-resume-cache-test.db"
+        manifest_path = runner.DATABASE_ROOT / "case-resume-cache-test.manifest.json"
+        cached_ingest = {"skipped": True, "cache_manifest": "cached-manifest.json"}
+
+        class FakeDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                return object()
+
+            def close(self) -> None:
+                pass
+
+        runner.DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        database_path.touch()
+        manifest_path.touch()
+        try:
+            with (
+                patch.object(runner, "Database", FakeDatabase),
+                patch.object(runner, "_case_paths", return_value=(database_path, manifest_path)),
+                patch.object(runner, "_remove_case_artifacts") as remove_artifacts,
+                patch.object(runner, "_validate_manifest") as validate_manifest,
+                patch.object(runner, "_cached_ingest_diagnostics", return_value=cached_ingest),
+                patch.object(runner, "_ingest_case") as ingest_case,
+                patch.object(
+                    runner,
+                    "_run_case_maintenance",
+                    return_value={"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION},
+                ),
+                patch.object(runner, "_recall_case", return_value=({}, [])),
+            ):
+                result = runner._run_case(
+                    case,
+                    Settings.for_test(),
+                    object(),
+                    None,
+                    skip_ingest=False,
+                    run_qa=False,
+                    clean=False,
+                    case_number=1,
+                    total_hint="1",
+                )
+        finally:
+            database_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+
+        self.assertEqual(result["ingest"], cached_ingest)
+        self.assertIsNone(result["error"])
+        validate_manifest.assert_called_once_with(manifest_path, case, Settings.for_test())
+        remove_artifacts.assert_not_called()
+        ingest_case.assert_not_called()
+
+    def test_run_case_reingests_when_manifest_is_missing(self) -> None:
+        case = runner.normalize_case(_record("case-missing-manifest"))
+        database_path = runner.DATABASE_ROOT / "case-missing-manifest-test.db"
+        manifest_path = runner.DATABASE_ROOT / "case-missing-manifest-test.manifest.json"
+        ingested = {"events": 1}
+
+        class FakeDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                return object()
+
+            def close(self) -> None:
+                pass
+
+        runner.DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        database_path.touch()
+        manifest_path.unlink(missing_ok=True)
+        try:
+            with (
+                patch.object(runner, "Database", FakeDatabase),
+                patch.object(runner, "_case_paths", return_value=(database_path, manifest_path)),
+                patch.object(runner, "_remove_case_artifacts"),
+                patch.object(runner, "_validate_manifest") as validate_manifest,
+                patch.object(runner, "_ingest_case", return_value=ingested) as ingest_case,
+                patch.object(runner, "_write_json_atomic"),
+                patch.object(
+                    runner,
+                    "_run_case_maintenance",
+                    return_value={"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION},
+                ),
+                patch.object(runner, "_recall_case", return_value=({}, [])),
+            ):
+                result = runner._run_case(
+                    case,
+                    Settings.for_test(),
+                    object(),
+                    None,
+                    skip_ingest=False,
+                    run_qa=False,
+                    clean=False,
+                    case_number=1,
+                    total_hint="1",
+                )
+        finally:
+            database_path.unlink(missing_ok=True)
+
+        self.assertEqual(result["ingest"], ingested)
+        self.assertIsNone(result["error"])
+        validate_manifest.assert_not_called()
+        ingest_case.assert_called_once()
+
+    def test_run_case_reingests_when_manifest_is_not_an_object(self) -> None:
+        case = runner.normalize_case(_record("case-invalid-manifest"))
+        database_path = runner.DATABASE_ROOT / "case-invalid-manifest-test.db"
+        manifest_path = runner.DATABASE_ROOT / "case-invalid-manifest-test.manifest.json"
+        ingested = {"events": 1}
+
+        class FakeDatabase:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def open(self) -> object:
+                return object()
+
+            def close(self) -> None:
+                pass
+
+        runner.DATABASE_ROOT.mkdir(parents=True, exist_ok=True)
+        database_path.touch()
+        manifest_path.write_text("[]", encoding="utf-8")
+        try:
+            with (
+                patch.object(runner, "Database", FakeDatabase),
+                patch.object(runner, "_case_paths", return_value=(database_path, manifest_path)),
+                patch.object(runner, "_ingest_case", return_value=ingested) as ingest_case,
+                patch.object(runner, "_write_json_atomic"),
+                patch.object(
+                    runner,
+                    "_run_case_maintenance",
+                    return_value={"protocol": runner.BENCHMARK_MAINTENANCE_PROTOCOL_VERSION},
+                ),
+                patch.object(runner, "_recall_case", return_value=({}, [])),
+            ):
+                result = runner._run_case(
+                    case,
+                    Settings.for_test(),
+                    object(),
+                    None,
+                    skip_ingest=False,
+                    run_qa=False,
+                    clean=False,
+                    case_number=1,
+                    total_hint="1",
+                )
+        finally:
+            database_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+
+        self.assertEqual(result["ingest"], ingested)
+        self.assertIsNone(result["error"])
+        ingest_case.assert_called_once()
 
     def test_retrieved_payload_persists_raw_ranking_observability(self) -> None:
         case = runner.LongMemEvalCase(
@@ -857,6 +1065,60 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual([case["case_id"] for case in report["cases"]], ["case-1", "case-2"])
         self.assertIsNone(report["cases"][1]["error"])
 
+    def test_resume_retries_non_quota_failed_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "dataset.json"
+            output = root / "result.json"
+            dataset.write_text(json.dumps([_record("case-1")]), encoding="utf-8")
+            dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+            failed = _case_result(
+                "case-1",
+                error="RuntimeError: reconcile failed",
+                qa_evaluated=False,
+            )
+            failed["error_type"] = "RuntimeError"
+            output.write_text(
+                json.dumps(_shard_report(dataset_sha256, [failed], qa_enabled=False)),
+                encoding="utf-8",
+            )
+            settings = Settings(
+                embedding_model="qwen3.7-text-embedding",
+                embedding_dim=2048,
+                embedding_api_mode="native",
+                embedding_text_type=None,
+            )
+
+            def run_case(case: runner.LongMemEvalCase, *_args: object, **_kwargs: object) -> dict[str, object]:
+                return _case_result(case.case_id, qa_evaluated=False)
+
+            with (
+                patch.object(runner, "load_settings", return_value=settings),
+                patch.object(runner, "_validate_production_settings"),
+                patch.object(runner, "initialize_process"),
+                patch.object(runner, "make_embedder", return_value=object()),
+                patch.object(runner, "make_reranker", return_value=None),
+                patch.object(runner, "_run_case", side_effect=run_case) as run,
+            ):
+                exit_code = runner.main(
+                    [
+                        "--dataset",
+                        str(dataset),
+                        "--output",
+                        str(output),
+                        "--resume",
+                        "--no-qa",
+                    ]
+                )
+
+            report = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0].case_id, "case-1")
+        self.assertEqual([case["case_id"] for case in report["cases"]], ["case-1"])
+        self.assertIsNone(report["cases"][0]["error"])
+
     def test_qa_retry_recovers_from_429(self) -> None:
         request = httpx.Request("POST", "https://example.test/chat/completions")
         response = httpx.Response(429, request=request)
@@ -1430,7 +1692,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(folded[0], ("Inherited grandmother's vintage diamond necklace.", 3.0))
         self.assertEqual(folded[1][0], "The necklace was appraised at $4,000")
 
-    def test_matched_user_turn_focuses_question_before_claim_needles(self) -> None:
+    def test_matched_user_turn_protects_answer_sentence_alongside_question(self) -> None:
         content = (
             "What did I inherit from my grandmother? "
             + "opening context " * 90
@@ -1443,8 +1705,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
             [("Inherited grandmother's vintage diamond necklace", 20.0)],
         )
 
-        self.assertIn("What did I inherit from my grandmother?", excerpt)
-        self.assertNotIn("vintage diamond necklace", excerpt)
+        self.assertIn("vintage diamond necklace", excerpt)
 
     def test_reader_excerpt_preserves_sentence_start_before_truncation(self) -> None:
         content = (
@@ -1787,6 +2048,11 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
         self.assertEqual(judge_payload["response_format"], {"type": "json_object"})
         self.assertIn("official-style LongMemEval", judge_payload["messages"][0]["content"])
 
+    def test_reader_generation_options_reserve_glm_thinking_and_answer_budget(self) -> None:
+        for model in ("glm-5.3-flash", "glm-5.3", "GLM-5.3-FLASH"):
+            with self.subTest(model=model):
+                self.assertEqual(runner._reader_generation_options(model), {"max_tokens": 2560})
+
     def test_reader_generation_options_keep_qwen_answer_budget_narrow(self) -> None:
         self.assertEqual(
             runner._reader_generation_options("qwen3.7-plus"),
@@ -1864,7 +2130,10 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                 "extractor_structured_mode": "json_schema",
                 "extractor_thinking": True,
                 "reader_context_protocol": "session-turn-window-v1",
+                "reader_prompt_protocol": "legacy",
                 "query_expansion_model": "different-expander",
+                "query_expansion_mode": "always",
+                "query_expansion_max": 1,
             }
 
             for field, value in changes.items():
@@ -1874,7 +2143,7 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "model configuration"):
                         runner._validate_resume_report(report, args, settings)
 
-    def test_resume_history_does_not_reopen_circuit_breaker(self) -> None:
+    def test_resume_retries_failed_history_without_reopening_circuit_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             dataset = root / "dataset.json"
@@ -1924,9 +2193,11 @@ class LongMemEvalBatchRunnerTests(unittest.TestCase):
 
             report = json.loads(output.read_text(encoding="utf-8"))
 
-        self.assertEqual(exit_code, 1)
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0].case_id, "case-5")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run.call_count, 6)
+        self.assertEqual(
+            [called.args[0].case_id for called in run.call_args_list], [f"case-{index}" for index in range(6)]
+        )
         self.assertEqual(report["status"], "completed")
 
 

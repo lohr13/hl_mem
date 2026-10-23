@@ -13,7 +13,7 @@ from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-__version__ = "1.1.4"
+__version__ = "1.1.6"
 from hl_mem.config.models import iter_config_fields  # noqa: E402
 from hl_mem.config_loader import load_settings  # noqa: E402
 from hl_mem.settings import Settings  # noqa: E402
@@ -167,6 +167,12 @@ TABLE_NOTES = {
         "`llm.reasoning_effort` 仅在显式配置时作为顶层字段发送给 Zhipu；默认未设置，不改变其他 provider 请求体。",
     ],
     "extraction": [
+        "",
+        '`extraction.memory_disposition_mode = "enforce"` 在 Event 明确携带',
+        '`metadata.memory_disposition = "exclude"` 时，于图片描述和 Claim 提取前保留 Event 并停止后续处理；',
+        '`"observe"` 只记录 `excluded_by_producer_disposition` 审计后继续，`"off"` 忽略该标记。缺失、非对象',
+        "metadata 或未知 disposition 值均 fail-open，不根据正文或 origin 推断。Hermes cron assistant 输出会显式打标，",
+        "cron prompt/user Event 与交互会话保持原行为。",
         "",
         "Worker 只合并同一 namespace/session 的 `message` Event；窗口满 `batch_max_events` 时立即提取，否则最多等待",
         "`batch_max_wait_seconds`。显式记忆、无 session 事件和非 message 事件不等待。Hermes 的 `sync_turn` 会原子写入",
